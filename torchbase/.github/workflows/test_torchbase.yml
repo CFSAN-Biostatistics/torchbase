@@ -1,0 +1,46 @@
+name: Test Torchbase
+
+on:
+  push:
+    branches: [ master, main, dev ]
+  pull_request:
+    branches: [ master, main, dev ]
+    
+jobs:
+  shigatyper:
+    runs-on: $\{\{ matrix.os \}\}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+
+      - name: Setup miniconda
+        uses: conda-incubator/setup-miniconda@v2
+        with:
+          activate-environment: torchbase
+          auto-activate-base: false
+
+      - name: Setup Environment for Torchbase
+        run: |
+          conda env create -f environment.yml
+          conda activate torchbase
+
+      - name: Environment Information
+        run: uname -a && env
+
+      - name: Run Test Suite
+        run: |
+          pytest
+      - name: Test Usage and Version
+        run: |
+          torch --help
+          torch --version
+
+      - name: Test Actual Run
+        run: |
+          torch # TODO
