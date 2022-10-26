@@ -67,7 +67,7 @@ Ready to contribute? Here's how to set up `torchbase` for local development.
 3. Install your local copy into a virtualenv. Assuming you have virtualenvwrapper installed, this is how you set up your fork for local development::
 
     $ cd torchbase/
-    $ python setup.py develop
+    $ python setup.py dev
 
 4. Create a branch for local development::
 
