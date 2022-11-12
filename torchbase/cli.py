@@ -96,8 +96,8 @@ def convert():
     pass
 
 @convert.command("pubmlst")
-@click.argument("scheme", type=click.File)
-@click.argument("sequences", type=click.File, nargs=-1, default=[])
+@click.argument("scheme", type=click.File())
+@click.argument("sequences", type=click.File(), nargs=-1)
 def _pubmlst(scheme, sequences=[]):
     "Create a torch from a PubMLST database and schema."
     pass
@@ -107,6 +107,10 @@ def _pubcgmlst():
     "Create a torch from a PubMLST cgMLST database and schema."
     pass
 
+@convert.command("chewie-ns")
+def _chewie_ns():
+    "Create a torch from a Chewie-NS wgMLST database and schema."
+    pass
 
 
 
