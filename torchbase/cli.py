@@ -103,13 +103,23 @@ def _pubmlst(scheme, sequences=[]):
     pass
 
 @convert.command("pubcgmlst")
+@click.argument("scheme", type=click.File())
+@click.argument("sequences", type=click.File(), nargs=-1)
 def _pubcgmlst():
     "Create a torch from a PubMLST cgMLST database and schema."
     pass
 
 @convert.command("chewie-ns")
+@click.argument("scheme", type=click.File())
+@click.argument("sequences", type=click.File(), nargs=-1)
 def _chewie_ns():
     "Create a torch from a Chewie-NS wgMLST database and schema."
+    pass
+
+@convert.command("shigatyper")
+@click.argument("sequences", type=click.File(), nargs=-1)
+def _shigatyper():
+    "Create a torch from ShigaTyper's database."
     pass
 
 
