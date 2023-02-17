@@ -87,7 +87,10 @@ dist: clean ## builds source and wheel package
 # Not sure if this is the right approach
 
 install: clean ## install the package to the active Python's site-packages
-	python setup.py install
+	pip install -e .
 
-dev: clean ## install the dev dependencies and install in edit mode
-	python setup.py develop
+install-dev: install ## install the dev dependencies and install in edit mode
+	pip install -e '.[dev]'
+
+image: clean
+	docker build -t CFSAN-Biostatistics/torch-helpers:latest

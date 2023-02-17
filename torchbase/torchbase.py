@@ -1,14 +1,12 @@
-from dataclasses import dataclass
+
 from enum import Enum
 from typing import Iterator, Tuple, Set, List
 from pathlib import Path
 
 from itertools import zip_longest
 
-import tomllib
-import csv
 
-TORCHBASE_REGISTRY_HASH = "" # IPFS hash for registry file DO NOT CHANGE
+import csv
 
 class Special(Enum):
     IGNORE = "?"
@@ -126,38 +124,3 @@ class Profile:
             profiles.append(cls(schema_name, profile, **dict(zip(header, row))))
         return Schema(schema_name, profiles)
             
-@dataclass
-class Torch:
-
-    path: Path
-    profile: Profile
-    references: Tuple[Path]
-    
-    @staticmethod
-    def load(new_path):
-        path = Path(new_path)
-        with open(path / "metadata.toml") as metadata_file:
-            metadata = tomllib.load(metadata_file)
-            # run some sanity checks
-            *_, namespace_from_path, name_from_path, version_from_path = path.parts()
-            if not metadata.namespace == namespace_from_path:
-                raise ValueError(f"Failed sanity check, namespace {metadata.namespace} from metadata didn't match {namespace_from_path} from path")
-            if not metadata.name == name_from_path:
-                raise ValueError(f"Failed sanity check, name {metadata.name} from metadata didn't match {name_from_path} from path")
-            if not str(metadata.version) == version_from_path:
-                raise ValueError(f"Failed sanity check, version {metadata.version} from metadata didn't match {version_from_path} from path")
-        with open(path / metadata.manifest.profiles) as profile_file:
-            profile = Profile(
-                schema_name = f"{metadata.name}_{metadata.version}",
-                rows=csv.reader(profile_file, dialect='excel', delimiter='\t')
-            )
-        resources = path / "_resources"
-        return Torch(
-            path=path,
-            profile=profile,
-            references=tuple([file for file in resources.iterdir() if file.is_file()])
-        )
-        
-
-    def dump(self, new_path):
-        pass

@@ -2,6 +2,9 @@ import click
 import logging
 
 
+from torchfs import handle_ipfs_errors, retrieve_manifest
+
+
 # """
 # Usage:
 #     torchbase version [<torch>] [<checkpoint>]
@@ -38,14 +41,13 @@ def cli(verbose=0):
     logging.basicConfig(level=log_level,
                         format='[%(asctime)s][%(name)-12s][%(levelname)-8s] %(message)s',
                         datefmt='%m-%d %H:%M')
-    
     pass
 
 @cli.command("list")
 @click.option('-i', '--installed', 'only_installed', default=False)
 def _list(only_installed=False):
     "Show available typing frameworks."
-    pass
+    manifest = handle_ipfs_errors(retrieve_manifest)()
 
 @cli.command("pull")
 @torch
@@ -60,6 +62,12 @@ def _pull(torch, force_use_gateway=False):
 @click.argument('torch_args', nargs=-1, type=click.UNPROCESSED)
 def _run(torch, cromwell_options="", torch_args=[]):
     "Run the selected torch."
+    pass
+
+@cli.command("info")
+@torch
+def _info(torch):
+    "Display info for the selected torch."
     pass
 
 

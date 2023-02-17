@@ -16,6 +16,7 @@ version 1.0
 # This program is free software: you can redistribute it and/or modify it.
 
 import "https://github.com/biowdl/tasks/blob/develop/minimap2.wdl" as minimap2
+import "https://github.com/CFSAN-Biostatistics/wdl-commons/blob/main/compression.wdl" as compression
 
 workflow shigatyper {
 
@@ -24,6 +25,8 @@ workflow shigatyper {
         File? interlaced_or_single_reads
         File? contigs
         String? user_provided_identifier
+
+        File profiles
         Array[File] references
     }
 
@@ -36,7 +39,6 @@ workflow shigatyper {
             File reads = interlaced_or_single_reads
         }
         call identify_reads { input:reads=reads }
-        call fastp { input:reads=reads }
         String reads_name = identify_reads.name
         Map[String, String] qualities =  fastp.output
     }
@@ -50,11 +52,11 @@ workflow shigatyper {
     String name = select_first([user_provided_identifier, contigs_name, reads_name])
 
     scatter (reference in references) {
-        call uncompress { input:input=reference }
+        call compression.fromzstd { input:in=reference }
         call minimap2.Indexing { 
             input:
                 outputPrefix=name, 
-                referenceFile=uncompress.output 
+                referenceFile=fromzstd.out 
         }
         call minimap2.Mapping { 
             input:
@@ -64,19 +66,47 @@ workflow shigatyper {
         }
     }
 
-    call callFromAlignments {input:alignments=Mapping.alignmentFile}
+    call callFromAlignments {
+        input:
+            alignments=Mapping.alignmentFile,
+            profiles=profiles
+    }
 
-}
+    output {
 
-task uncompress {
-
-}
-
-task fastp {
+    }
 
 }
 
 task callFromAlignments {
+    input {
+        File alignments
+        File profiles
+    }
 
+    command <<<
+        python <<<CODE
+
+from torchbase.torchbase import Profile
+import csv
+
+with open("~{profile}") as prof:
+    rdr = csv.reader(prof, dialect='excel', delimiter='\t')
+    schema = Profile.parse(rdr)
+
+
+
+CODE
+    >>>
+
+    runtime {
+        container: "CFSAN-biostatistics/torch-helpers:latest"
+        cpu: 1
+        memory: "512 MB"
+    }    
+
+    output {
+
+    }
 }
 

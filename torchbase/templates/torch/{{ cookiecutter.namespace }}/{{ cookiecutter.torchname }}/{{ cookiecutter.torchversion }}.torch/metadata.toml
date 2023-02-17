@@ -5,19 +5,25 @@ name = {{ cookiecutter.torchname }}
 version = {{ cookiecutter.torchversion }}
 
 [maintainers]
-authors = []
-affiliations = []
-email = []
+authors = ["Author Authirsdottir"]
+email = ["author@college.edu"]
+affiliations = ["College University"]
+
 
 [description]
 short = "{{ cookiecutter.torchname }} for Torchbase, microbial typing by reference."
 long = '''
     Describe your tool in-depth, here.
 '''
+taxa =
+    "List taxa this scheme is appropriate for."
 
 [manifest]
 profiles = "{{ cookiecutter.buildname }}.profiles.tsv" # name of profiles file
 workflow = "{{ cookiecutter.buildname }}.wdl"
+buildfile = "{{ cookiecutter.torchname }}.build.wdl"
+resources = []
+
 
 [citations]
 # doi = ""
