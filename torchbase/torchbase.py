@@ -1,9 +1,11 @@
 
+from collections import defaultdict
 from enum import Enum
 from typing import Iterator, Tuple, Set, List
 from pathlib import Path
 
 from itertools import zip_longest
+import json
 
 
 import csv
@@ -19,8 +21,9 @@ class Special(Enum):
         return repr(self)
 
 class Schema:
-    def __init__(self, name, profiles=[]):
+    def __init__(self, name, profiles=[], version=""):
         self.name = name
+        self.version = version
         self.profiles = tuple(profiles)
 
     def __getitem__(self, key):
@@ -114,6 +117,15 @@ class Profile:
     def __str__(self) -> str:
         return f"<{self.profile} ({len(self.values)} loci)>"
 
+    def to_json(self):
+        return json.dumps(
+            dict(
+                schema = self.schema.name,
+                profile = self.profile,
+                **{header:value for header, value in zip(self.header, self.values)}
+            )
+        )
+
     @classmethod
     def parse(cls, schema_name: str, rows: Iterator[Tuple]) -> Schema:
         rows = iter(rows)
@@ -122,5 +134,4 @@ class Profile:
         for profile, *row in rows:
             assert len(header) == len(row)
             profiles.append(cls(schema_name, profile, **dict(zip(header, row))))
-        return Schema(schema_name, profiles)
-            
+        return Schema(schema_name, profiles=profiles)

@@ -20,9 +20,12 @@ taxa =
 
 [manifest]
 profiles = "{{ cookiecutter.buildname }}.profiles.tsv" # name of profiles file
-workflow = "{{ cookiecutter.buildname }}.wdl"
+main = "{{ cookiecutter.buildname }}.wdl"
 buildfile = "{{ cookiecutter.torchname }}.build.wdl"
 resources = []
+
+[additional_methods] # you can specify alternate workflows that users can run instead, i.e. '-m hash'
+# hash = {{ cookiecutter.buildname }}.by_hashes.wdl
 
 
 [citations]

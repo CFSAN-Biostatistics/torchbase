@@ -48,6 +48,11 @@ def register_torch(path, node=node, port=port):
         toml.dump(metadata, md_file)
 
 
+@handle_ipfs_errors
+def exists(manifest, torch_entry):
+    return False #TODO
+
+
 
 @dataclass
 class Torch:

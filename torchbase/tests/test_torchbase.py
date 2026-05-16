@@ -6,7 +6,7 @@ import pytest
 
 from .bigsdb_fixture import bigsdb, profile
 
-import torchbase
+import torchbase, torchbase.torchfs
 
 
 # def test_torchbase(response):
@@ -85,3 +85,35 @@ class TestProfileParser:
     def test_determination(self, bigsdb, profile):
         schema = torchbase.Profile.parse("bigsdb", bigsdb)
         assert schema[profile] == "1"
+
+
+head = """Hello and Welcome to IPFS!"""
+
+hash = "/ipfs/QmQPeNsJPyVWPFDVHb77w8G42Fvo15z4bG2X8D2GhfbSXc/readme"
+
+
+class TestTorchFS:
+
+    def test_ipyfs(self):
+        cat = torchbase.torchfs.ipyfs.Cat()
+        assert cat(hash)['result'][0:len(head)] == head
+
+    def test_handle_ipfs_errors(self):
+        pass
+
+    def test_retrieve_manifest(self):
+        pass
+
+    def test_download_torch(self):
+        pass
+
+    def test_register_torch(self):
+        pass
+
+    def test_exists(self):
+        pass
+
+class TestTorchClass:
+
+    def test_load(self):
+        pass

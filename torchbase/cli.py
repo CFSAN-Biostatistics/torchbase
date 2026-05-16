@@ -1,8 +1,23 @@
+import csv
 import click
 import logging
+import json
+from functools import partial
+from pathlib import Path
+from xml.etree.ElementTree import ElementTree as xml
+from tabulate import tabulate
+from subprocess import run
+
+import zstandard as zstd
+import zipfile
+import gzip
+import bz2
+
+from torchfs import handle_ipfs_errors, retrieve_manifest, retrieve_torch, exists
+from torchbase import Schema, Profile
 
 
-from torchfs import handle_ipfs_errors, retrieve_manifest
+manifest = handle_ipfs_errors(retrieve_manifest)()
 
 
 # """
@@ -43,11 +58,24 @@ def cli(verbose=0):
                         datefmt='%m-%d %H:%M')
     pass
 
+def json_formatter(manifest):
+    return json.dumps(manifest)
+
+def table_formatter(manifest):
+    return tabulate(manifest)
+
 @cli.command("list")
-@click.option('-i', '--installed', 'only_installed', default=False)
-def _list(only_installed=False):
+@click.option('-i', '--installed', 'only_installed', flag_value=True, default=True)
+@click.option('-a', '--available', 'only_installed', flag_value=False)
+@click_option('-h', '--human-readable', 'output_format', flag_value=table_formatter, help='Output in a human-readable table.', default=table_formatter)
+@click_option('-j', '--json', 'output_format', flag_value=json_formatter, help='Output in JSON.')
+def _list(only_installed=True, output_format=table_formatter):
     "Show available typing frameworks."
-    manifest = handle_ipfs_errors(retrieve_manifest)()
+    if only_installed:
+        mani = filter(partial(exists, manifest), manifest) # filter on manifest items that are local
+    else:
+        mani = manifest
+    click.echo(output_format(mani))
 
 @cli.command("pull")
 @torch
@@ -56,19 +84,81 @@ def _pull(torch, force_use_gateway=False):
     "Pull the selected torch via IPFS or an IPFS gateway."
     pass
 
-@cli.command("run", context_settings=dict(ignore_unknown_options=True))
-@click.option('-c', "--cromwell-opts", "cromwell_options", nargs=1, default="", type=click.STRING)
-@torch
-@click.argument('torch_args', nargs=-1, type=click.UNPROCESSED)
-def _run(torch, cromwell_options="", torch_args=[]):
-    "Run the selected torch."
-    pass
+
 
 @cli.command("info")
 @torch
 def _info(torch):
     "Display info for the selected torch."
     pass
+
+
+#
+# File handling helper
+# 
+
+class ReadsFile(click.Path):
+    name = "reads or contigs file"
+
+    def __init__(self):
+        super().__init__(self, exists=True, dir_okay=False, readable=True, resolve_path=True, allow_dash=True, path_type=Path)
+
+    def convert(self, value, param, ctx):
+        path = super().convert(value, param, ctx)
+        # open the file, try to decompress it, and compress to zstandard
+        magic_sigs = (
+            (0x1f8b08, gzip.open, zstd.read_to_iter),
+            (0x425a68, bz2.open, zstd.read_to_iter),
+            (0x504b0304, zipfile.open, zstd.read_to_iter),
+            (0x28b52ffd, open, lambda s: s) # zstd doesn't need to be converted
+        )
+
+        for signature, method, compressor in magic_sigs:
+            with open(path, 'rb') as file:
+                if file.read(4).startswith(signature):
+                    return compressor(method(path, 'rb'))
+        # otherwise the file is not compressed, compress it
+        return zstd.read_to_iter(open(path, 'rb'))
+
+
+
+# We use this a lot
+
+ReadsParam = partial(click.option, 
+                     nargs=1, 
+                     default="", 
+                     type=ReadsFile())
+
+#
+# Main running method
+#
+
+@cli.command("run", context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
+@click.option("--cromwell-opts", "cromwell_options", nargs=1, default="", type=click.STRING)
+@torch
+@click.option("-m" "--method", nargs=1, default="main", type=click.STRING)
+@ReadsParam("-c", "--contigs")
+@ReadsParam("-r", "--reads")
+@ReadsParam("-pe1", "--paired1", "--pe1")
+@ReadsParam("-pe2", "--paired2", "--pe2")
+@ReadsParam("-i", "--interlaced")
+@ReadsParam("-l", "--longreads")
+@click.argument('torch_args', nargs=-1, type=click.UNPROCESSED)
+@click.pass_context
+def _run(clx, torch, cromwell_options="", method="main", contigs=None, reads=None, paired1=None, paired2=None, interlaced=None, longreads=None, torch_args=[]):
+    "Run the selected torch."
+    if not (contigs or reads or (paired1 and paired2) or interlaced or longreads):
+        if (paired1 and not paired2) or (paired2 and not paired1):
+            raise click.Abort("paired-end data requires two files; use -i/--interlaced for single-file paired-end data.")
+        raise click.Abort("at least one reads option and file must be given.")
+    if len(filter(lambda v: v is not None, (contigs, reads, paired1, interlaced, longreads))) > 1:
+        raise click.Abort("provide reads in no more than one layout form.")
+    
+    
+
+    return run(['miniwdl'] + torch_args)
+
+
 
 
 
@@ -83,6 +173,26 @@ def tools(verbose=0):
                         format='[%(asctime)s][%(name)-12s][%(levelname)-8s] %(message)s',
                         datefmt='%m-%d %H:%M')
     pass
+
+@tools.command("call", context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
+@click.argument("schema", type=click.File(), nargs=1)
+@click.argument("-j", "--json-profile", help="combined allele call in JSON format", nargs=1, default=None)
+@click.pass_context
+def call(ctx, schema, json_profile=None):
+    "Load a profile definition and make a profile call from allele calls"
+    with open(schema) as schema_file:
+        reader = csv.reader(schema_file, delimiter='\t')
+        schema = Profile.parse(tuple(reader))
+    schema = Profile.parse()
+    if json_profile:
+        profile = Profile(schema, **json.loads(json_profile))
+    else:
+        iterator = iter(ctx.args)
+        profile = Profile(schema, **{key:value for key, value in zip(iterator, iterator)})
+    try:
+        return json.dumps(schema[profile])
+    except KeyError as e:
+        raise click.ClickException(e.message)
 
 
 @tools.command("version")
