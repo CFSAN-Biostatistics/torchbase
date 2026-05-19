@@ -13,11 +13,13 @@ import zipfile
 import gzip
 import bz2
 
-from torchfs import handle_ipfs_errors, retrieve_manifest, retrieve_torch, exists
+try:
+    from torchfs import handle_ipfs_errors, retrieve_manifest, exists
+    manifest = handle_ipfs_errors(retrieve_manifest)()
+except Exception:
+    # Fallback if IPFS not available
+    manifest = {}
 from torchbase import Schema, Profile
-
-
-manifest = handle_ipfs_errors(retrieve_manifest)()
 
 
 # """
@@ -67,8 +69,8 @@ def table_formatter(manifest):
 @cli.command("list")
 @click.option('-i', '--installed', 'only_installed', flag_value=True, default=True)
 @click.option('-a', '--available', 'only_installed', flag_value=False)
-@click_option('-h', '--human-readable', 'output_format', flag_value=table_formatter, help='Output in a human-readable table.', default=table_formatter)
-@click_option('-j', '--json', 'output_format', flag_value=json_formatter, help='Output in JSON.')
+@click.option('-h', '--human-readable', 'output_format', flag_value=table_formatter, help='Output in a human-readable table.', default=table_formatter)
+@click.option('-j', '--json', 'output_format', flag_value=json_formatter, help='Output in JSON.')
 def _list(only_installed=True, output_format=table_formatter):
     "Show available typing frameworks."
     if only_installed:
@@ -80,9 +82,38 @@ def _list(only_installed=True, output_format=table_formatter):
 @cli.command("pull")
 @torch
 @click.option("--force-use-gateway", default=False)
-def _pull(torch, force_use_gateway=False):
+@click.option("--pin", is_flag=True, default=False, help="Pin the torch version to config.")
+@click.option("--version", default=None, help="Specific version to pull (used with --pin).")
+def _pull(torch, force_use_gateway=False, pin=False, version=None):
     "Pull the selected torch via IPFS or an IPFS gateway."
-    pass
+    from torchbase.registry import RegistryManager
+    from torchbase.config import RegistryConfig
+    from pathlib import Path
+
+    # Load config with hierarchical override
+    config = RegistryConfig.load()
+    manager = RegistryManager(config)
+
+    if pin:
+        # Pin mode: fetch latest (or specified version) and write to config
+        config_path = Path.cwd() / ".torchbase.toml"
+
+        # Check if we should use user config instead
+        if not config_path.parent.exists():
+            config_path = Path.home() / ".torchbase" / "config.toml"
+
+        try:
+            manager.pin_torch(torch, version=version, config_path=config_path)
+            click.echo(f"Pinned {torch} to version {version or 'latest'}")
+        except Exception as e:
+            raise click.ClickException(str(e))
+    else:
+        # Normal pull mode
+        try:
+            local_path = manager.fetch_torch(torch, version=version)
+            click.echo(f"Pulled {torch} to {local_path}")
+        except Exception as e:
+            raise click.ClickException(str(e))
 
 
 
@@ -101,7 +132,7 @@ class ReadsFile(click.Path):
     name = "reads or contigs file"
 
     def __init__(self):
-        super().__init__(self, exists=True, dir_okay=False, readable=True, resolve_path=True, allow_dash=True, path_type=Path)
+        super().__init__(exists=True, dir_okay=False, readable=True, resolve_path=True, allow_dash=True, path_type=Path)
 
     def convert(self, value, param, ctx):
         path = super().convert(value, param, ctx)
@@ -176,7 +207,7 @@ def tools(verbose=0):
 
 @tools.command("call", context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
 @click.argument("schema", type=click.File(), nargs=1)
-@click.argument("-j", "--json-profile", help="combined allele call in JSON format", nargs=1, default=None)
+@click.option("-j", "--json-profile", help="combined allele call in JSON format", nargs=1, default=None)
 @click.pass_context
 def call(ctx, schema, json_profile=None):
     "Load a profile definition and make a profile call from allele calls"

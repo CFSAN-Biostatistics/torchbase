@@ -1,6 +1,7 @@
 """Tests for registry torch resolution."""
 
 import pytest
+import toml
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from torchbase.registry import RegistryManager
@@ -329,3 +330,183 @@ class TestEdgeCases:
         with patch.object(manager, '_fetch_manifest', return_value=mock_manifest):
             result = manager.resolve("namespace/torchname")
             assert result == "QmHash1"
+
+
+class TestPinMechanism:
+    """Test pin mechanism for version locking."""
+
+    def test_pin_torch_fetches_latest_and_saves_to_config(self, tmp_path):
+        """Test that pinning a torch fetches latest and writes to config."""
+        config_path = tmp_path / ".torchbase" / "config.toml"
+        config_path.parent.mkdir(parents=True)
+
+        config = RegistryConfig(
+            default_registry="https://registry.example.com"
+        )
+        manager = RegistryManager(config)
+
+        mock_manifest = {
+            "namespace/datatorch": {
+                "latest": "QmHash1",
+                "1.0.0": "QmHash1",
+                "2.0.0": "QmHash2"
+            }
+        }
+
+        with patch.object(manager, '_fetch_manifest', return_value=mock_manifest):
+            manager.pin_torch("namespace/datatorch", config_path=config_path)
+
+        # Verify config was written
+        assert config_path.exists()
+        config_data = toml.load(config_path)
+        assert config_data["pins"]["namespace/datatorch"] == "1.0.0"
+
+    def test_pin_torch_with_explicit_version(self, tmp_path):
+        """Test that pinning with explicit version pins that version."""
+        config_path = tmp_path / ".torchbase" / "config.toml"
+        config_path.parent.mkdir(parents=True)
+
+        config = RegistryConfig(
+            default_registry="https://registry.example.com"
+        )
+        manager = RegistryManager(config)
+
+        mock_manifest = {
+            "namespace/datatorch": {
+                "latest": "QmHash2",
+                "1.0.0": "QmHash1",
+                "2.0.0": "QmHash2"
+            }
+        }
+
+        with patch.object(manager, '_fetch_manifest', return_value=mock_manifest):
+            manager.pin_torch("namespace/datatorch", version="1.0.0", config_path=config_path)
+
+        # Verify specific version was pinned
+        config_data = toml.load(config_path)
+        assert config_data["pins"]["namespace/datatorch"] == "1.0.0"
+
+    def test_pin_torch_is_idempotent(self, tmp_path):
+        """Test that pinning same torch twice is no-op."""
+        config_path = tmp_path / ".torchbase" / "config.toml"
+        config_path.parent.mkdir(parents=True)
+
+        config = RegistryConfig(
+            default_registry="https://registry.example.com"
+        )
+        manager = RegistryManager(config)
+
+        mock_manifest = {
+            "namespace/datatorch": {
+                "latest": "QmHash1",
+                "1.0.0": "QmHash1",
+                "2.0.0": "QmHash2"
+            }
+        }
+
+        with patch.object(manager, '_fetch_manifest', return_value=mock_manifest) as mock_fetch:
+            # First pin
+            manager.pin_torch("namespace/datatorch", config_path=config_path)
+            first_call_count = mock_fetch.call_count
+
+            # Second pin - should be no-op
+            manager.pin_torch("namespace/datatorch", config_path=config_path)
+            second_call_count = mock_fetch.call_count
+
+            # Should not have fetched again
+            assert second_call_count == first_call_count
+
+    def test_pin_torch_atomic_update(self, tmp_path):
+        """Test that config update is atomic - no partial writes on error."""
+        config_path = tmp_path / ".torchbase" / "config.toml"
+        config_path.parent.mkdir(parents=True)
+
+        # Write initial config
+        initial_data = {"pins": {"namespace/other": "1.0.0"}}
+        with open(config_path, 'w') as f:
+            toml.dump(initial_data, f)
+
+        config = RegistryConfig(
+            default_registry="https://registry.example.com"
+        )
+        manager = RegistryManager(config)
+
+        # Mock manifest fetch to raise error
+        with patch.object(manager, '_fetch_manifest', side_effect=Exception("Network error")):
+            with pytest.raises(Exception):
+                manager.pin_torch("namespace/datatorch", config_path=config_path)
+
+        # Verify original config unchanged
+        config_data = toml.load(config_path)
+        assert config_data == initial_data
+        assert "namespace/datatorch" not in config_data["pins"]
+
+    def test_pin_torch_with_workflow_dependency(self, tmp_path):
+        """Test that pinning data torch also pins workflow torch dependency."""
+        config_path = tmp_path / ".torchbase" / "config.toml"
+        config_path.parent.mkdir(parents=True)
+
+        config = RegistryConfig(
+            default_registry="https://registry.example.com"
+        )
+        manager = RegistryManager(config)
+
+        # Mock manifests for both data and workflow torch
+        def mock_fetch(registry_url):
+            # First call for data torch, second for workflow torch
+            if mock_fetch.call_count == 1:
+                return {
+                    "namespace/datatorch": {
+                        "latest": "QmDataHash1",
+                        "1.0.0": "QmDataHash1",
+                        "workflow": "namespace/workflowtorch"
+                    }
+                }
+            else:
+                return {
+                    "namespace/workflowtorch": {
+                        "latest": "QmWorkflowHash1",
+                        "1.5.0": "QmWorkflowHash1"
+                    }
+                }
+
+        mock_fetch.call_count = 0
+        original_fetch = lambda url: mock_fetch(url)
+
+        def counting_fetch(url):
+            mock_fetch.call_count += 1
+            return original_fetch(url)
+
+        with patch.object(manager, '_fetch_manifest', side_effect=counting_fetch):
+            manager.pin_torch("namespace/datatorch", config_path=config_path)
+
+        # Verify both torches were pinned
+        config_data = toml.load(config_path)
+        assert config_data["pins"]["namespace/datatorch"] == "1.0.0"
+        assert config_data["pins"]["namespace/workflowtorch"] == "1.5.0"
+
+    def test_directory_pins_override_user_pins(self, tmp_path):
+        """Test that directory pins take precedence over user pins."""
+        user_config_path = tmp_path / "user" / ".torchbase" / "config.toml"
+        user_config_path.parent.mkdir(parents=True)
+        project_config_path = tmp_path / "project" / ".torchbase.toml"
+        project_config_path.parent.mkdir(parents=True)
+
+        # Write user config with pin
+        user_data = {"pins": {"namespace/datatorch": "1.0.0"}}
+        with open(user_config_path, 'w') as f:
+            toml.dump(user_data, f)
+
+        # Write project config with different pin
+        project_data = {"pins": {"namespace/datatorch": "2.0.0"}}
+        with open(project_config_path, 'w') as f:
+            toml.dump(project_data, f)
+
+        # Load config with hierarchical override
+        config = RegistryConfig.load(
+            user_config_dir=tmp_path / "user",
+            project_config_dir=tmp_path / "project"
+        )
+
+        # Project pin should override user pin
+        assert config.pins["namespace/datatorch"] == "2.0.0"
