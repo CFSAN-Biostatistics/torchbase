@@ -6,6 +6,8 @@ from pathlib import Path
 
 from itertools import zip_longest
 import json
+import re
+from datetime import datetime
 
 
 import csv
@@ -135,3 +137,177 @@ class Profile:
             assert len(header) == len(row)
             profiles.append(cls(schema_name, profile, **dict(zip(header, row))))
         return Schema(schema_name, profiles=profiles)
+
+
+class Version:
+    """Represents a versioned torch with support for multiple versioning strategies.
+
+    Strategies:
+    - snapshot: ISO date string (YYYY-MM-DD)
+    - semver: Semantic versioning (X.Y.Z)
+    - content-hash: Hash-based versioning (any alphanumeric string)
+
+    All versions are ordered by timestamp (Unix epoch) for cross-strategy comparison.
+    """
+
+    def __init__(self, version_str: str, strategy: str, timestamp: int):
+        """Initialize a Version.
+
+        Args:
+            version_str: The version string (format depends on strategy)
+            strategy: One of 'snapshot', 'semver', or 'content-hash'
+            timestamp: Unix epoch timestamp for ordering
+        """
+        self.version_str = version_str
+        self.strategy = strategy
+        self.timestamp = timestamp
+
+    @staticmethod
+    def parse(version_str: str, metadata: dict) -> "Version":
+        """Parse a version string with metadata context.
+
+        Args:
+            version_str: The version string to parse
+            metadata: Dictionary containing version metadata with [version] section
+
+        Returns:
+            Version object
+
+        Raises:
+            ValueError: If metadata is invalid or version format is invalid
+        """
+        # Validate metadata structure
+        if "version" not in metadata:
+            raise ValueError("Missing version section in metadata")
+
+        version_meta = metadata["version"]
+
+        if "strategy" not in version_meta:
+            raise ValueError("Missing strategy in version metadata")
+
+        if "timestamp" not in version_meta:
+            raise ValueError("Missing timestamp in version metadata")
+
+        strategy = version_meta["strategy"]
+        timestamp = version_meta["timestamp"]
+
+        # Validate version string based on strategy
+        if strategy == "snapshot":
+            Version._validate_snapshot(version_str)
+        elif strategy == "semver":
+            Version._validate_semver(version_str)
+        elif strategy == "content-hash":
+            Version._validate_content_hash(version_str)
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}")
+
+        return Version(version_str, strategy, timestamp)
+
+    @staticmethod
+    def _validate_snapshot(version_str: str) -> None:
+        """Validate ISO date format (YYYY-MM-DD).
+
+        Raises:
+            ValueError: If format is invalid
+        """
+        try:
+            datetime.strptime(version_str, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(
+                f"Invalid snapshot format: '{version_str}'. Expected ISO date (YYYY-MM-DD)"
+            )
+
+    @staticmethod
+    def _validate_semver(version_str: str) -> None:
+        """Validate semantic versioning format (X.Y.Z).
+
+        Raises:
+            ValueError: If format is invalid
+        """
+        # Match semver pattern: X.Y.Z or X.Y.Z-prerelease or X.Y.Z+build
+        semver_pattern = r"^\d+\.\d+\.\d+(-[a-zA-Z0-9]+)*(\+[a-zA-Z0-9]+)*$"
+        if not re.match(semver_pattern, version_str):
+            raise ValueError(
+                f"Invalid semver format: '{version_str}'. Expected X.Y.Z format"
+            )
+
+    @staticmethod
+    def _validate_content_hash(version_str: str) -> None:
+        """Validate content hash format (alphanumeric string).
+
+        Currently accepts any non-empty alphanumeric string.
+
+        Raises:
+            ValueError: If format is invalid
+        """
+        if not version_str or not re.match(r"^[a-zA-Z0-9]+$", version_str):
+            raise ValueError(
+                f"Invalid content-hash format: '{version_str}'. "
+                "Expected alphanumeric string"
+            )
+
+    @staticmethod
+    def compare(v1: "Version", v2: "Version") -> int:
+        """Compare two versions based on timestamps.
+
+        Args:
+            v1: First version
+            v2: Second version
+
+        Returns:
+            -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+        """
+        if v1.timestamp < v2.timestamp:
+            return -1
+        elif v1.timestamp > v2.timestamp:
+            return 1
+        else:
+            return 0
+
+    def __eq__(self, other: "Version") -> bool:
+        """Check equality based on timestamp."""
+        if not isinstance(other, Version):
+            return False
+        return self.timestamp == other.timestamp
+
+    def __lt__(self, other: "Version") -> bool:
+        """Check if this version is less than other (by timestamp)."""
+        if not isinstance(other, Version):
+            return NotImplemented
+        return self.timestamp < other.timestamp
+
+    def __le__(self, other: "Version") -> bool:
+        """Check if version <= other (by timestamp)."""
+        if not isinstance(other, Version):
+            return NotImplemented
+        return self.timestamp <= other.timestamp
+
+    def __gt__(self, other: "Version") -> bool:
+        """Check if this version is greater than other (by timestamp)."""
+        if not isinstance(other, Version):
+            return NotImplemented
+        return self.timestamp > other.timestamp
+
+    def __ge__(self, other: "Version") -> bool:
+        """Check if version >= other (by timestamp)."""
+        if not isinstance(other, Version):
+            return NotImplemented
+        return self.timestamp >= other.timestamp
+
+    def __hash__(self) -> int:
+        """Hash based on strategy and version_str.
+
+        Note: timestamp is not included as it's mutable metadata.
+        """
+        return hash((self.strategy, self.version_str))
+
+    def __repr__(self) -> str:
+        """String representation of Version."""
+        return (
+            f"Version({self.version_str!r}, strategy={self.strategy!r}, "
+            f"timestamp={self.timestamp})"
+        )
+
+    def __str__(self) -> str:
+        """Human-readable string representation."""
+        return f"{self.version_str} ({self.strategy})"
