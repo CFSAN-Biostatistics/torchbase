@@ -1,10 +1,15 @@
 """Pytest configuration and shared fixtures."""
 
+import sys
 import pytest
 from pathlib import Path
+from unittest.mock import MagicMock
 import tempfile
 import toml
 import csv
+
+# Mock ipyfs if not available (used by torchfs)
+sys.modules['ipyfs'] = MagicMock()
 
 
 @pytest.fixture
