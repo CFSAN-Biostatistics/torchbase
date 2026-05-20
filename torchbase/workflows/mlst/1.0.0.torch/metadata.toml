@@ -1,0 +1,26 @@
+namespace = "workflows"
+name = "mlst"
+version = "1.0.0"
+
+[version_meta]
+strategy = "semver"
+timestamp = 1609459200
+
+[typing]
+method = "mlst"
+description = "Default MLST typing workflow"
+
+[maintainers]
+authors = ["Default Author"]
+email = ["default@example.com"]
+affiliations = ["Default Institute"]
+
+[description]
+short = "Default MLST typing workflow"
+long = "Standard MLST pipeline for microbial typing"
+taxa = ["Bacteria"]
+
+[manifest]
+profiles = "profiles.tsv"
+workflow = "main.wdl"
+resources = []
