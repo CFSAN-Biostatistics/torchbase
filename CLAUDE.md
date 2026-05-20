@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Torchbase is a Python framework for microbial serotyping prediction from sequencing data. It addresses the problem that most microbial typing pipelines are written by domain experts without software engineering backgrounds, resulting in poor UX, reliability, maintainability, and database distribution/upkeep.
+Torchbase is a Python framework for microbial serotyping prediction from sequencing data. It addresses challenges in microbial typing pipelines around database distribution, versioning, reproducibility, and maintainability.
 
 **Core Concept**: "Torches" are versioned, distributed databases containing:
 - Allele reference sequences
