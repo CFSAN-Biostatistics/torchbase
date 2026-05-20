@@ -52,7 +52,7 @@ def diverse_alleles_fasta(temp_fasta_dir):
 
 @pytest.fixture
 def overlapping_alleles_fasta(temp_fasta_dir):
-    """Create a FASTA file with overlapping sequences (95% containment)."""
+    """Create a FASTA file with overlapping sequences."""
     fasta_path = temp_fasta_dir / "overlapping.fasta"
     # Create sequences where allele_2 is ~95% contained in allele_1
     seq1 = "A" * 100
@@ -64,11 +64,15 @@ def overlapping_alleles_fasta(temp_fasta_dir):
 
 @pytest.fixture
 def duplicate_alleles_fasta(temp_fasta_dir):
-    """Create a FASTA file with duplicate sequences (98% symmetric similarity)."""
+    """Create a FASTA file with duplicate sequences."""
     fasta_path = temp_fasta_dir / "duplicates.fasta"
     # Create sequences that are ~98% similar
-    seq1 = "ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATG"
-    seq2 = "ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATTG"
+    seq1 = (
+        "ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATG"  # noqa
+    )
+    seq2 = (
+        "ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATTG"  # noqa
+    )
     content = f">allele_1\n{seq1}\n>allele_2\n{seq2}"
     fasta_path.write_text(content)
     return fasta_path
@@ -122,24 +126,28 @@ class TestAnalyzeLocus:
         # At least one pair of alleles
         for pair_key, similarity in report.similarities.items():
             if pair_key[0] != pair_key[1]:  # different alleles
-                assert similarity >= 0.95  # very high similarity for identical sequences
+                # very high similarity for identical sequences
+                assert similarity >= 0.95
 
 
 class TestAutoTuning:
     """Tests for auto-tuning threshold detection."""
 
-    def test_gap_detection_identifies_outliers(self, overlapping_alleles_fasta):
+    def test_gap_detection_identifies_outliers(
+            self, overlapping_alleles_fasta):
         """Test that gap detection identifies overlapping alleles."""
         report = analyze_locus(overlapping_alleles_fasta, k_size=21)
         # Should detect the overlap
         assert len(report.suspect_pairs) > 0
-        assert report.statistics["threshold_type"] in ["gap_detection", "percentile"]
+        threshold_type = report.statistics["threshold_type"]
+        assert threshold_type in ["gap_detection", "percentile"]
 
     def test_fallback_to_percentile(self, diverse_alleles_fasta):
         """Test fallback to 99th percentile when no clear gap."""
         report = analyze_locus(diverse_alleles_fasta, k_size=21)
         # With diverse alleles, should use percentile
-        assert report.statistics["threshold_type"] == "percentile"
+        threshold_type = report.statistics["threshold_type"]
+        assert threshold_type == "percentile"
         assert report.threshold is not None
 
     def test_threshold_value_in_report(self, single_locus_fasta):
@@ -161,7 +169,8 @@ class TestSuspectPairDetection:
 
     def test_overlap_classification(self, overlapping_alleles_fasta):
         """Test that overlapping alleles are classified correctly."""
-        report = analyze_locus(overlapping_alleles_fasta, k_size=21, overlap_threshold=95)
+        report = analyze_locus(overlapping_alleles_fasta, k_size=21,
+                               overlap_threshold=95)
         suspect_pairs = report.suspect_pairs
         # Should have at least one suspect pair
         if len(suspect_pairs) > 0:
@@ -173,7 +182,8 @@ class TestSuspectPairDetection:
 
     def test_duplicate_classification(self, duplicate_alleles_fasta):
         """Test that duplicate alleles are classified correctly."""
-        report = analyze_locus(duplicate_alleles_fasta, k_size=21, duplicate_threshold=98)
+        report = analyze_locus(duplicate_alleles_fasta, k_size=21,
+                               duplicate_threshold=98)
         suspect_pairs = report.suspect_pairs
         # May or may not flag depending on exact similarity calculation
         for pair in suspect_pairs:
@@ -181,17 +191,23 @@ class TestSuspectPairDetection:
 
     def test_custom_overlap_threshold(self, overlapping_alleles_fasta):
         """Test that custom overlap threshold parameter works."""
-        report_low = analyze_locus(overlapping_alleles_fasta, k_size=21, overlap_threshold=90)
-        report_high = analyze_locus(overlapping_alleles_fasta, k_size=21, overlap_threshold=99)
+        report_low = analyze_locus(overlapping_alleles_fasta, k_size=21,
+                                   overlap_threshold=90)
+        report_high = analyze_locus(overlapping_alleles_fasta, k_size=21,
+                                    overlap_threshold=99)
         # Lower threshold should be more permissive
-        assert len(report_low.suspect_pairs) >= len(report_high.suspect_pairs)
+        assert len(report_low.suspect_pairs) >= len(
+            report_high.suspect_pairs)
 
     def test_custom_duplicate_threshold(self, duplicate_alleles_fasta):
         """Test that custom duplicate threshold parameter works."""
-        report_low = analyze_locus(duplicate_alleles_fasta, k_size=21, duplicate_threshold=90)
-        report_high = analyze_locus(duplicate_alleles_fasta, k_size=21, duplicate_threshold=99)
+        report_low = analyze_locus(duplicate_alleles_fasta, k_size=21,
+                                   duplicate_threshold=90)
+        report_high = analyze_locus(duplicate_alleles_fasta, k_size=21,
+                                    duplicate_threshold=99)
         # Lower threshold should be more permissive
-        assert len(report_low.suspect_pairs) >= len(report_high.suspect_pairs)
+        assert len(report_low.suspect_pairs) >= len(
+            report_high.suspect_pairs)
 
 
 class TestStatisticsCalculation:
@@ -251,10 +267,11 @@ class TestEdgeCases:
         """Test handling of FASTA with many alleles."""
         fasta_path = temp_fasta_dir / "many.fasta"
         content_lines = []
+        base_seq = (
+            "ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATG"  # noqa
+        )
         for i in range(20):
             content_lines.append(f">allele_{i+1}")
-            # Create slightly different sequences
-            base_seq = "ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATG"
             content_lines.append(base_seq)
         fasta_path.write_text("\n".join(content_lines))
         report = analyze_locus(fasta_path, k_size=21)
