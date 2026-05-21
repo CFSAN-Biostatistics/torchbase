@@ -3,8 +3,20 @@ name: WDL Tests
 on:
   push:
     branches: [ master, main ]
+    paths:
+      - 'torchbase/workflows/**/*.wdl'
+      - 'torchbase/tests/test_*wdl*.py'
+      - 'torchbase/tests/test_minhash_allele_calling.py'
+      - 'torchbase/tests/test_alignment_fallback.py'
+      - '.github/workflows/test-wdl.yml'
   pull_request:
     branches: [ master, main ]
+    paths:
+      - 'torchbase/workflows/**/*.wdl'
+      - 'torchbase/tests/test_*wdl*.py'
+      - 'torchbase/tests/test_minhash_allele_calling.py'
+      - 'torchbase/tests/test_alignment_fallback.py'
+      - '.github/workflows/test-wdl.yml'
 
 jobs:
   test-wdl:
