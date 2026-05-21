@@ -92,11 +92,13 @@ filter_info = {
 
 # Read quality data if present
 quality_data = {}
-quality_json_file = "~{quality_json}"
-if quality_json_file != "" and Path(quality_json_file).exists():
-    with open(quality_json_file) as f:
-        quality_data = json.load(f)
-    filter_info["quality_json_present"] = True
+quality_json_file = "~{default="" quality_json}"
+if quality_json_file and quality_json_file != "" and quality_json_file != "None":
+    quality_path = Path(quality_json_file)
+    if quality_path.is_file():
+        with open(quality_json_file) as f:
+            quality_data = json.load(f)
+        filter_info["quality_json_present"] = True
 
 # Extract suspect data
 suspect_alleles = set()
