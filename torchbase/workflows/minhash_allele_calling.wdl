@@ -7,7 +7,7 @@ workflow minhash_allele_calling {
         File? reads_file
         Int min_coverage = 3
         Int ksize = 31
-        Int sketch_size = 1000
+        Int sketch_size = 10
     }
 
     call sketch_sequences as sketch_queries {
@@ -53,8 +53,16 @@ task sketch_sequences {
 
     command <<<
         set -e
+        # Check if input file is empty or has no sequences
+        if [ ! -s ~{sequences} ] || ! grep -q "^>" ~{sequences}; then
+            # Create empty signature file for empty input
+            touch sequences.sig
+            exit 0
+        fi
+
         sourmash sketch dna \
-            -p k=~{ksize},scaled=~{scaled} \
+            -p k=~{ksize},scaled=~{scaled},abund \
+            --singleton \
             -o sequences.sig \
             ~{sequences}
     >>>
@@ -79,6 +87,19 @@ task compare_sketches {
 
     command <<<
         set -e
+        # Handle empty query case
+        if [ ! -s ~{query_sketch} ]; then
+            # Create empty similarity matrix
+            echo "" > similarity.csv
+            exit 0
+        fi
+
+        # Handle empty allele DB case
+        if [ ! -s ~{allele_sketch} ]; then
+            echo "" > similarity.csv
+            exit 0
+        fi
+
         sourmash compare \
             ~{query_sketch} \
             ~{allele_sketch} \
@@ -155,13 +176,43 @@ with open("~{similarity_matrix}") as f:
     reader = csv.reader(f)
     rows = list(reader)
 
+# Handle empty similarity matrix
+if len(rows) <= 1:
+    # Empty result
+    with open('allele_calls.json', 'w') as f:
+        json.dump({}, f)
+    with open('allele_profile.txt', 'w') as f:
+        f.write('')
+    exit(0)
+
 # Extract similarity scores (query vs alleles)
-# Matrix format: first row/col are identifiers
-# We want row 1 (first query) vs all allele columns
-similarities = []
-if len(rows) > 1 and len(rows[1]) > 1:
-    # Skip first column (label), take rest as similarities
-    similarities = [float(x) if x else 0.0 for x in rows[1][1:]]
+# Matrix format with --singleton: all-vs-all NxN matrix
+# Row 0: header with N identifiers (query1...queryN, allele1...alleleM)
+# Rows 1..N: similarity data (no row labels)
+# Query seqs occupy first num_queries rows/cols
+# Allele seqs occupy next num_alleles cols
+
+num_queries = len(query_seqs)
+num_alleles = len(allele_seqs)
+
+# Validate matrix dimensions
+expected_size = num_queries + num_alleles
+if len(rows) != expected_size + 1:  # +1 for header
+    raise ValueError(f"Matrix size mismatch: expected {expected_size+1} rows, got {len(rows)}")
+
+# Extract max similarity across all queries for each allele
+max_similarities = [0.0] * num_alleles
+
+for query_idx in range(num_queries):
+    data_row_idx = query_idx + 1  # Skip header row
+    if data_row_idx < len(rows):
+        row = rows[data_row_idx]
+        # Allele columns start at num_queries
+        for allele_idx in range(num_alleles):
+            col_idx = num_queries + allele_idx
+            if col_idx < len(row):
+                sim = float(row[col_idx]) if row[col_idx] else 0.0
+                max_similarities[allele_idx] = max(max_similarities[allele_idx], sim)
 
 # Find best match per locus
 results = {}
@@ -173,8 +224,8 @@ for locus, alleles in sorted(alleles_by_locus.items()):
 
     for allele in alleles:
         idx = allele['index']
-        if idx < len(similarities):
-            sim = similarities[idx]
+        if idx < len(max_similarities):
+            sim = max_similarities[idx]
             if sim > best_similarity:
                 best_similarity = sim
                 best_match = allele['allele_id']
