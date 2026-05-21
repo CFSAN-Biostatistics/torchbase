@@ -168,6 +168,8 @@ ReadsParam = partial(click.option,
 @click.option("--cromwell-opts", "cromwell_options", nargs=1, default="", type=click.STRING)
 @torch
 @click.option("-m" "--method", nargs=1, default="main", type=click.STRING)
+@click.option("--workflow", default=None, help="Override workflow torch (namespace/name format)")
+@click.option("-o", "--output", default=None, help="Output file for results")
 @ReadsParam("-c", "--contigs")
 @ReadsParam("-r", "--reads")
 @ReadsParam("-pe1", "--paired1", "--pe1")
@@ -176,18 +178,83 @@ ReadsParam = partial(click.option,
 @ReadsParam("-l", "--longreads")
 @click.argument('torch_args', nargs=-1, type=click.UNPROCESSED)
 @click.pass_context
-def _run(clx, torch, cromwell_options="", method="main", contigs=None, reads=None, paired1=None, paired2=None, interlaced=None, longreads=None, torch_args=[]):
+def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=None, contigs=None, reads=None, paired1=None, paired2=None, interlaced=None, longreads=None, torch_args=[]):
     "Run the selected torch."
+    from torchbase.torchfs import Torch
+    from torchbase.registry import RegistryManager
+    from torchbase.config import RegistryConfig
+
     if not (contigs or reads or (paired1 and paired2) or interlaced or longreads):
         if (paired1 and not paired2) or (paired2 and not paired1):
             raise click.Abort("paired-end data requires two files; use -i/--interlaced for single-file paired-end data.")
         raise click.Abort("at least one reads option and file must be given.")
     if len(filter(lambda v: v is not None, (contigs, reads, paired1, interlaced, longreads))) > 1:
         raise click.Abort("provide reads in no more than one layout form.")
-    
-    
 
-    return run(['miniwdl'] + torch_args)
+    try:
+        # Load data torch
+        data_torch = Torch.load(torch)
+
+        # Determine workflow to use
+        workflow_torch = data_torch
+
+        if workflow:
+            # User specified custom workflow
+            config = RegistryConfig.load()
+            manager = RegistryManager(config)
+            try:
+                workflow_path = manager.fetch_torch(workflow)
+                workflow_torch = Torch.load(workflow_path)
+            except Exception as e:
+                raise click.ClickException(f"Failed to fetch workflow {workflow}: {str(e)}")
+        elif not data_torch.workflow:
+            # No workflow in data torch, try default
+            try:
+                config = RegistryConfig.load()
+                manager = RegistryManager(config)
+                default_workflow_path = manager.fetch_torch("torchbase/default-workflow")
+                workflow_torch = Torch.load(default_workflow_path)
+            except Exception as e:
+                raise click.ClickException(
+                    f"Workflow not found in torch and default workflow fetch failed: {str(e)}"
+                )
+
+        # Validate workflow exists and is named main.wdl
+        if not workflow_torch.workflow:
+            raise click.ClickException("No workflow found (main.wdl) in torch")
+
+        if workflow_torch.workflow.name != "main.wdl":
+            raise click.ClickException(
+                f"Workflow must be named 'main.wdl', found: {workflow_torch.workflow.name}"
+            )
+
+        # Build miniwdl command
+        miniwdl_cmd = ['miniwdl', 'run', str(workflow_torch.workflow)]
+
+        # Add input files
+        if contigs:
+            miniwdl_cmd.extend(['contigs=' + str(contigs)])
+        if reads:
+            miniwdl_cmd.extend(['reads=' + str(reads)])
+        if paired1 and paired2:
+            miniwdl_cmd.extend(['paired1=' + str(paired1), 'paired2=' + str(paired2)])
+        if interlaced:
+            miniwdl_cmd.extend(['interlaced=' + str(interlaced)])
+        if longreads:
+            miniwdl_cmd.extend(['longreads=' + str(longreads)])
+
+        # Execute workflow
+        result = run(miniwdl_cmd)
+
+        if result.returncode != 0:
+            raise click.ClickException(f"Workflow execution failed with code {result.returncode}")
+
+        return result
+
+    except click.ClickException:
+        raise
+    except Exception as e:
+        raise click.ClickException(f"Error running workflow: {str(e)}")
 
 
 
