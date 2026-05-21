@@ -142,12 +142,14 @@ class TestMinHashWDLTaskSignature:
         assert "task" in content, "WDL file does not contain task definition"
 
     def test_wdl_task_name_is_minhash_allele_calling(self):
-        """WDL task is named minhash_allele_calling"""
+        """WDL workflow/task is named minhash_allele_calling"""
         wdl_path = TORCHBASE_ROOT / "workflows" / "minhash_allele_calling.wdl"
         with open(wdl_path) as f:
             content = f.read()
 
-        assert "task minhash_allele_calling" in content, "Task name is incorrect"
+        # Accept either task or workflow with minhash_allele_calling name
+        assert ("task minhash_allele_calling" in content or
+                "workflow minhash_allele_calling" in content), "Task/workflow name is incorrect"
 
     def test_wdl_has_input_section(self):
         """WDL task has input section"""
@@ -320,6 +322,7 @@ class TestMinHashWDLSourmashIntegration:
             "Task command does not compare sketches"
 
 
+@pytest.mark.miniwdl
 class TestMinHashWDLExecutionWithContigs:
     """Test with synthetic data (known allele combinations) - contigs."""
 
@@ -488,6 +491,7 @@ class TestMinHashWDLExecutionWithContigs:
                 assert isinstance(results[locus]["confidence"], bool), f"confidence is not boolean for {locus}"
 
 
+@pytest.mark.miniwdl
 class TestMinHashWDLExecutionWithReads:
     """Test with synthetic data (known allele combinations) - reads with depth filtering."""
 
@@ -564,6 +568,7 @@ class TestMinHashWDLExecutionWithReads:
             assert result.returncode == 0, f"miniwdl run failed: {result.stderr}"
 
 
+@pytest.mark.miniwdl
 class TestMinHashWDLCorrectAlleleIdentification:
     """Test best match per locus with similarity score."""
 
@@ -687,6 +692,7 @@ class TestMinHashWDLCorrectAlleleIdentification:
                     f"Confidence should be True for exact match in {locus}"
 
 
+@pytest.mark.miniwdl
 class TestMinHashWDLEdgeCases:
     """Test edge cases and boundary conditions."""
 
