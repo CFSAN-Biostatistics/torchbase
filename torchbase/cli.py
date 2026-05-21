@@ -137,19 +137,24 @@ class ReadsFile(click.Path):
     def convert(self, value, param, ctx):
         path = super().convert(value, param, ctx)
         # open the file, try to decompress it, and compress to zstandard
+        compressor = zstd.ZstdCompressor()
+
+        def compress_stream(file_obj):
+            return compressor.stream_reader(file_obj)
+
         magic_sigs = (
-            (0x1f8b08, gzip.open, zstd.read_to_iter),
-            (0x425a68, bz2.open, zstd.read_to_iter),
-            (0x504b0304, zipfile.open, zstd.read_to_iter),
+            (0x1f8b08, gzip.open, compress_stream),
+            (0x425a68, bz2.open, compress_stream),
+            (0x504b0304, zipfile.open, compress_stream),
             (0x28b52ffd, open, lambda s: s) # zstd doesn't need to be converted
         )
 
-        for signature, method, compressor in magic_sigs:
+        for signature, method, converter in magic_sigs:
             with open(path, 'rb') as file:
                 if file.read(4).startswith(signature):
-                    return compressor(method(path, 'rb'))
+                    return converter(method(path, 'rb'))
         # otherwise the file is not compressed, compress it
-        return zstd.read_to_iter(open(path, 'rb'))
+        return compress_stream(open(path, 'rb'))
 
 
 
