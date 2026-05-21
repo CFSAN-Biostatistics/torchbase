@@ -174,9 +174,17 @@ ReadsParam = partial(click.option,
 @ReadsParam("-pe2", "--paired2", "--pe2")
 @ReadsParam("-i", "--interlaced")
 @ReadsParam("-l", "--longreads")
+@click.option("--include-suspect-alleles", is_flag=True, default=True,
+              help="Include suspect alleles in typing (default: enabled). Use with --exclude-suspect-alleles to filter.")
+@click.option("--exclude-suspect-alleles", is_flag=True, default=False,
+              help="Exclude suspect alleles from typing. Opt-in filtering based on quality.json data.")
+@click.option("--exclude-suspect-loci", is_flag=True, default=False,
+              help="Exclude entire loci that are marked suspect. Removes all alleles from those loci.")
+@click.option("--exclude-suspect-profiles", is_flag=True, default=False,
+              help="Exclude all loci used by suspect profiles. Most conservative filtering option.")
 @click.argument('torch_args', nargs=-1, type=click.UNPROCESSED)
 @click.pass_context
-def _run(clx, torch, cromwell_options="", method="main", contigs=None, reads=None, paired1=None, paired2=None, interlaced=None, longreads=None, torch_args=[]):
+def _run(clx, torch, cromwell_options="", method="main", contigs=None, reads=None, paired1=None, paired2=None, interlaced=None, longreads=None, include_suspect_alleles=True, exclude_suspect_alleles=False, exclude_suspect_loci=False, exclude_suspect_profiles=False, torch_args=[]):
     "Run the selected torch."
     if not (contigs or reads or (paired1 and paired2) or interlaced or longreads):
         if (paired1 and not paired2) or (paired2 and not paired1):
