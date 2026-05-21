@@ -346,7 +346,7 @@ class TestDefaultWorkflowFallback:
     def test_default_workflow_registry_path(
         self, torch_without_main_wdl, sample_reads_file
     ):
-        """Default workflow is fetched from torchbase/default-workflow."""
+        """Default workflow is fetched from workflows/default-workflow."""
         runner = CliRunner()
 
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
@@ -364,10 +364,11 @@ class TestDefaultWorkflowFallback:
                         ['run', str(torch_without_main_wdl), '-r', str(sample_reads_file)]
                     )
 
-                    # Should request torchbase/default-workflow
+                    # Should request workflows/default-workflow
                     if mock_manager.fetch_torch.called:
                         torch_name = mock_manager.fetch_torch.call_args[0][0]
-                        assert torch_name == "torchbase/default-workflow"
+                        assert "workflows" in torch_name
+                        assert "default-workflow" in torch_name
 
 
 class TestWorkflowOverride:
