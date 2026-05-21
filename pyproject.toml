@@ -60,3 +60,9 @@ packages = ["torchbase"]
 
 [tool.setuptools.package-data]
 "*" = ["*.txt", "*.rst"]
+
+[tool.pytest.ini_options]
+markers = [
+    "miniwdl: tests requiring miniwdl and Docker (skipped unless CI=true)",
+]
+addopts = "-m 'not miniwdl' --tb=short"

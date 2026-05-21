@@ -1,0 +1,41 @@
+name: WDL Tests
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test-wdl:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e '.[dev]'
+        pip install sourmash
+
+    - name: Run static WDL tests
+      run: |
+        pytest torchbase/tests/test_minhash_allele_calling.py -v -m "not miniwdl"
+
+    - name: Set up Docker for miniwdl
+      run: |
+        docker --version
+        docker pull quay.io/biocontainers/sourmash:4.8.11--hdfd78af_0
+        docker pull python:3.12-slim
+
+    - name: Run miniwdl execution tests
+      env:
+        CI: true
+      run: |
+        pytest torchbase/tests/test_minhash_allele_calling.py -v -m "miniwdl" --tb=short
