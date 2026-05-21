@@ -1,0 +1,11 @@
+namespace = "workflows"
+name = "mlst"
+version = "1.0.0"
+description = "Default MLST workflow for torchbase"
+
+[manifest]
+profiles = "profiles.tsv"
+workflow = "main.wdl"
+
+[typing]
+method = "mlst"
