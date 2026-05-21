@@ -113,33 +113,42 @@ output_fasta = "filtered_alleles.fasta"
 excluded_alleles = []
 excluded_loci = []
 
-with open(input_fasta) as f_in:
-    with open(output_fasta, 'w') as f_out:
-        in_suspect = False
-        current_header = None
-        current_locus = None
+# If no filtering needed, just symlink input to output
+filtering_needed = filter_info["filtering_enabled"] and (suspect_alleles or suspect_loci)
 
-        for line in f_in:
-            if line.startswith('>'):
-                current_header = line[1:].strip().split()[0]
-                # Extract locus name (everything before last underscore)
-                parts = current_header.split('_')
-                if len(parts) >= 2:
-                    current_locus = '_'.join(parts[:-1])
-                else:
-                    current_locus = current_header
+if not filtering_needed:
+    # No filtering - create symlink or copy
+    import shutil
+    shutil.copy2(input_fasta, output_fasta)
+else:
+    # Perform filtering
+    with open(input_fasta) as f_in:
+        with open(output_fasta, 'w') as f_out:
+            in_suspect = False
+            current_header = None
+            current_locus = None
 
-                # Check if this allele/locus should be filtered
-                in_suspect = False
-                if ~{exclude_suspect_alleles} and current_header in suspect_alleles:
-                    in_suspect = True
-                    excluded_alleles.append(current_header)
-                elif ~{exclude_suspect_loci} and current_locus in suspect_loci:
-                    in_suspect = True
-                    excluded_loci.append(current_locus)
+            for line in f_in:
+                if line.startswith('>'):
+                    current_header = line[1:].strip().split()[0]
+                    # Extract locus name (everything before last underscore)
+                    parts = current_header.split('_')
+                    if len(parts) >= 2:
+                        current_locus = '_'.join(parts[:-1])
+                    else:
+                        current_locus = current_header
 
-            if not in_suspect:
-                f_out.write(line)
+                    # Check if this allele/locus should be filtered
+                    in_suspect = False
+                    if ~{exclude_suspect_alleles} and current_header in suspect_alleles:
+                        in_suspect = True
+                        excluded_alleles.append(current_header)
+                    elif ~{exclude_suspect_loci} and current_locus in suspect_loci:
+                        in_suspect = True
+                        excluded_loci.append(current_locus)
+
+                if not in_suspect:
+                    f_out.write(line)
 
 # Update filter info with results
 filter_info["suspect_alleles_excluded"] = list(set(excluded_alleles))
