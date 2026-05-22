@@ -76,6 +76,7 @@ task filter_allele_database {
         set -e
         python3 <<'PYTHON'
 import json
+import shutil
 from pathlib import Path
 
 # Initialize filter info
@@ -113,12 +114,11 @@ output_fasta = "filtered_alleles.fasta"
 excluded_alleles = []
 excluded_loci = []
 
-# If no filtering needed, just symlink input to output
+# Only filter if we have suspect data AND filtering is enabled
 filtering_needed = filter_info["filtering_enabled"] and (suspect_alleles or suspect_loci)
 
 if not filtering_needed:
-    # No filtering - create symlink or copy
-    import shutil
+    # No filtering - just copy input to output
     shutil.copy2(input_fasta, output_fasta)
 else:
     # Perform filtering
