@@ -314,6 +314,30 @@ def _build(torch):
     "Build a torch's database."
     pass
 
+@tools.command("convert-pubmlst")
+@click.option("--url", required=True, help="PubMLST database API URL")
+@click.option("--scheme-id", required=True, type=int, help="Scheme ID number")
+@click.option("--output", required=True, help="Output directory for torch")
+@click.option("--kmer-size", default=13, type=int, help="K-mer size for quality analysis")
+@click.option("--overlap-threshold", default=0.90, type=float, help="Overlap threshold for quality analysis")
+@click.option("--duplicate-threshold", default=0.95, type=float, help="Duplicate threshold for quality analysis")
+def _convert_pubmlst(url, scheme_id, output, kmer_size, overlap_threshold, duplicate_threshold):
+    "Convert a PubMLST scheme to torch format."
+    from torchbase.conversions.pubmlst import convert_scheme
+
+    try:
+        torch_path = convert_scheme(
+            database_url=url,
+            scheme_id=scheme_id,
+            output_path=output,
+            kmer_size=kmer_size,
+            overlap_threshold=overlap_threshold,
+            duplicate_threshold=duplicate_threshold,
+        )
+        click.echo(f"Successfully created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
+
 @tools.group("convert")
 def convert():
     "Various conversion tools to make torches."
@@ -322,8 +346,8 @@ def convert():
 @convert.command("pubmlst")
 @click.argument("scheme", type=click.File())
 @click.argument("sequences", type=click.File(), nargs=-1)
-def _pubmlst(scheme, sequences=[]):
-    "Create a torch from a PubMLST database and schema."
+def _pubmlst_legacy(scheme, sequences=[]):
+    "Create a torch from a PubMLST database and schema (legacy)."
     pass
 
 @convert.command("pubcgmlst")
