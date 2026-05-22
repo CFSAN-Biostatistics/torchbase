@@ -20,6 +20,13 @@ short = "Default MLST typing workflow"
 long = "Standard MLST pipeline for microbial typing"
 taxa = ["Bacteria"]
 
+[thresholds]
+min_identity = 0.9
+min_coverage = 3
+ambiguity_threshold = 0.85
+ksize = 31
+sketch_size = 10
+
 [manifest]
 profiles = "profiles.tsv"
 workflow = "main.wdl"
