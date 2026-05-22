@@ -151,7 +151,10 @@ class ReadsFile(click.Path):
 
         for signature, method, converter in magic_sigs:
             with open(path, 'rb') as file:
-                if file.read(4).startswith(signature):
+                header = file.read(4)
+                # Convert signature int to bytes for comparison
+                sig_bytes = signature.to_bytes((signature.bit_length() + 7) // 8, 'big')
+                if header.startswith(sig_bytes):
                     return converter(method(path, 'rb'))
         # otherwise the file is not compressed, compress it
         return compress_stream(open(path, 'rb'))
