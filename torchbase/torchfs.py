@@ -5,7 +5,10 @@ from typing import Tuple, Dict, Optional, Union
 
 from torchbase.torchbase import Profile, Schema
 
-import ipyfs
+try:
+    import ipyfs
+except ImportError:
+    ipyfs = None
 
 import toml
 import csv
@@ -267,9 +270,13 @@ class Torch:
                 if f.is_file() and not f.name.startswith(".")
             )
 
-        # Get workflows if specified
+        # Workflow discovery: convention-based (main.wdl) takes precedence
         workflow = None
-        if "workflow" in manifest:
+        main_wdl = path / "main.wdl"
+        if main_wdl.exists():
+            workflow = main_wdl
+        elif "workflow" in manifest:
+            # Fallback to manifest-specified workflow
             workflow = path / manifest["workflow"]
 
         buildfile = None
