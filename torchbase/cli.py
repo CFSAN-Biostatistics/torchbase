@@ -145,7 +145,7 @@ class ReadsFile(click.Path):
         magic_sigs = (
             (0x1f8b08, gzip.open, compress_stream),
             (0x425a68, bz2.open, compress_stream),
-            (0x504b0304, zipfile.open, compress_stream),
+            (0x504b0304, lambda p, m: zipfile.ZipFile(p, m), compress_stream),
             (0x28b52ffd, open, lambda s: s) # zstd doesn't need to be converted
         )
 
