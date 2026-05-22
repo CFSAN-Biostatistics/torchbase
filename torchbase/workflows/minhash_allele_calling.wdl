@@ -1,215 +1,262 @@
 version 1.0
 
-task minhash_allele_calling {
-    # MinHash-based allele calling task.
-    # Performs k-mer based allele identification using MinHash sketching via sourmash.
-    # Optionally applies read depth filtering to reduce noise from low-quality or off-target k-mers.
-
+workflow minhash_allele_calling {
     input {
         File query_sequences
         File allele_fasta
         File? reads_file
-        Int kmer_size = 31
         Int min_coverage = 3
-        String output_json = "allele_calls.json"
+        Int ksize = 31
+        Int sketch_size = 10
+    }
+
+    call sketch_sequences as sketch_queries {
+        input:
+            sequences = query_sequences,
+            ksize = ksize,
+            scaled = sketch_size
+    }
+
+    call sketch_sequences as sketch_alleles {
+        input:
+            sequences = allele_fasta,
+            ksize = ksize,
+            scaled = sketch_size
+    }
+
+    call compare_sketches {
+        input:
+            query_sketch = sketch_queries.sketch,
+            allele_sketch = sketch_alleles.sketch,
+            allele_fasta = allele_fasta
+    }
+
+    call call_alleles {
+        input:
+            similarity_matrix = compare_sketches.similarity_csv,
+            query_sequences = query_sequences,
+            allele_fasta = allele_fasta
     }
 
     output {
-        File results = output_json
+        File results = call_alleles.results
+        String allele_profile = call_alleles.allele_profile
+    }
+}
+
+task sketch_sequences {
+    input {
+        File sequences
+        Int ksize = 31
+        Int scaled = 1000
     }
 
     command <<<
         set -e
+        # Check if input file is empty or has no sequences
+        if [ ! -s ~{sequences} ] || ! grep -q "^>" ~{sequences}; then
+            # Create empty signature file for empty input
+            touch sequences.sig
+            exit 0
+        fi
 
-        # Create temporary directory for working files
-        mkdir -p /tmp/minhash_work
-        cd /tmp/minhash_work
+        sourmash sketch dna \
+            -p k=~{ksize},scaled=~{scaled},abund \
+            --singleton \
+            -o sequences.sig \
+            ~{sequences}
+    >>>
 
-        # Python script for MinHash allele calling
-        python3 << 'PYSCRIPT'
+    output {
+        File sketch = "sequences.sig"
+    }
+
+    runtime {
+        docker: "quay.io/biocontainers/sourmash:4.8.11--hdfd78af_0"
+        cpu: 1
+        memory: "2 GB"
+    }
+}
+
+task compare_sketches {
+    input {
+        File query_sketch
+        File allele_sketch
+        File allele_fasta
+    }
+
+    command <<<
+        set -e
+        # Handle empty query case
+        if [ ! -s ~{query_sketch} ]; then
+            # Create empty similarity matrix
+            echo "" > similarity.csv
+            exit 0
+        fi
+
+        # Handle empty allele DB case
+        if [ ! -s ~{allele_sketch} ]; then
+            echo "" > similarity.csv
+            exit 0
+        fi
+
+        sourmash compare \
+            ~{query_sketch} \
+            ~{allele_sketch} \
+            --csv similarity.csv
+    >>>
+
+    output {
+        File similarity_csv = "similarity.csv"
+    }
+
+    runtime {
+        docker: "quay.io/biocontainers/sourmash:4.8.11--hdfd78af_0"
+        cpu: 1
+        memory: "2 GB"
+    }
+}
+
+task call_alleles {
+    input {
+        File similarity_matrix
+        File query_sequences
+        File allele_fasta
+    }
+
+    command <<<
+        set -e
+        python3 <<CODE
 import json
-import subprocess
-import sys
-from pathlib import Path
+import csv
 from collections import defaultdict
 
-def create_sketches(fasta_file, kmer_size, output_prefix):
-    """Create sourmash sketches for FASTA file."""
-    cmd = [
-        'sourmash', 'sketch', 'dna',
-        '-p', f'k={kmer_size},scaled=1000',
-        '--output', f'{output_prefix}.sig',
-        fasta_file
-    ]
-    subprocess.run(cmd, check=True, capture_output=True)
-    return f'{output_prefix}.sig'
-
-def filter_kmers_by_depth(reads_file, kmer_size, min_coverage):
-    """
-    Analyze read depth distribution and filter k-mers.
-
-    Returns a set of k-mers that pass the depth threshold.
-    For now, returns empty set (no filtering applied).
-    In full implementation, would use k-mer histogram analysis.
-    """
-    # TODO: Implement k-mer histogram analysis with peak detection
-    # For now, return empty set to indicate no filtering
-    return set()
-
-def parse_fasta(fasta_file):
-    """Parse FASTA and return sequences grouped by locus."""
-    sequences = {}
-    current_id = None
-    current_seq = []
-
-    with open(fasta_file) as f:
+def parse_fasta(fasta_path):
+    sequences = []
+    with open(fasta_path) as f:
+        current_header = None
+        current_seq = []
         for line in f:
             line = line.strip()
             if line.startswith('>'):
-                if current_id:
-                    sequences[current_id] = ''.join(current_seq)
-                current_id = line[1:]  # Remove '>'
+                if current_header is not None:
+                    sequences.append((current_header, ''.join(current_seq)))
+                current_header = line[1:]
                 current_seq = []
             else:
                 current_seq.append(line)
-
-        if current_id:
-            sequences[current_id] = ''.join(current_seq)
-
+        if current_header is not None:
+            sequences.append((current_header, ''.join(current_seq)))
     return sequences
 
-def extract_locus_from_id(allele_id):
-    """Extract locus name from allele ID."""
-    # Handle formats like "locus1_1", "locus1_allele2", etc.
-    parts = allele_id.rsplit('_', 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        return parts[0]
-    return allele_id
+def extract_locus_and_allele(header):
+    parts = header.split('_')
+    if len(parts) >= 2:
+        allele_id = parts[-1]
+        locus = '_'.join(parts[:-1])
+        return locus, allele_id
+    return header, "unknown"
 
-def compare_sketches(query_sig, allele_sig, kmer_size):
-    """Compare query sketch against allele sketches and return similarity."""
-    cmd = [
-        'sourmash', 'compare',
-        '-k', str(kmer_size),
-        query_sig, allele_sig,
-        '--output-format', 'csv'
-    ]
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+# Parse inputs
+query_seqs = parse_fasta("~{query_sequences}")
+allele_seqs = parse_fasta("~{allele_fasta}")
 
-    # Parse CSV output to extract similarity score
-    lines = result.stdout.strip().split('\n')
-    if len(lines) >= 2:
-        # Second line contains the similarity score
-        values = lines[1].split(',')
-        if len(values) >= 2:
-            try:
-                similarity = float(values[1])
-                return max(0.0, min(1.0, similarity))  # Clamp to [0, 1]
-            except ValueError:
-                return 0.0
+# Group alleles by locus
+alleles_by_locus = defaultdict(list)
+for idx, (header, seq) in enumerate(allele_seqs):
+    locus, allele_id = extract_locus_and_allele(header)
+    alleles_by_locus[locus].append({
+        'allele_id': allele_id,
+        'header': header,
+        'index': idx
+    })
 
-    return 0.0
+# Read similarity matrix
+with open("~{similarity_matrix}") as f:
+    reader = csv.reader(f)
+    rows = list(reader)
 
-def call_alleles(query_file, allele_file, kmer_size, min_coverage, reads_file=None):
-    """Main allele calling logic."""
+# Handle empty similarity matrix
+if len(rows) <= 1:
+    # Empty result
+    with open('allele_calls.json', 'w') as f:
+        json.dump({}, f)
+    with open('allele_profile.txt', 'w') as f:
+        f.write('')
+    exit(0)
 
-    # Step 1: Apply depth filtering if reads provided
-    if reads_file:
-        filtered_kmers = filter_kmers_by_depth(reads_file, kmer_size, min_coverage)
+# Extract similarity scores (query vs alleles)
+# Matrix format with --singleton: all-vs-all NxN matrix
+# Row 0: header with N identifiers (query1...queryN, allele1...alleleM)
+# Rows 1..N: similarity data (no row labels)
+# Query seqs occupy first num_queries rows/cols
+# Allele seqs occupy next num_alleles cols
 
-    # Step 2: Create sketches
-    query_sig = create_sketches(query_file, kmer_size, 'query')
-    allele_sig = create_sketches(allele_file, kmer_size, 'alleles')
+num_queries = len(query_seqs)
+num_alleles = len(allele_seqs)
 
-    # Step 3: Parse alleles and group by locus
-    allele_sequences = parse_fasta(allele_file)
-    locus_alleles = defaultdict(list)
-    for allele_id, sequence in allele_sequences.items():
-        locus = extract_locus_from_id(allele_id)
-        locus_alleles[locus].append((allele_id, sequence))
+# Validate matrix dimensions
+expected_size = num_queries + num_alleles
+if len(rows) != expected_size + 1:  # +1 for header
+    raise ValueError(f"Matrix size mismatch: expected {expected_size+1} rows, got {len(rows)}")
 
-    # Step 4: Compare query against each allele
-    results = {}
-    for locus, alleles in sorted(locus_alleles.items()):
-        best_match = None
-        best_similarity = -1
+# Extract max similarity across all queries for each allele
+max_similarities = [0.0] * num_alleles
 
-        for allele_id, sequence in alleles:
-            # For now, use simple sequence comparison as placeholder
-            # In full implementation, would use sourmash compare
-            similarity = compute_similarity(query_file, sequence, kmer_size)
+for query_idx in range(num_queries):
+    data_row_idx = query_idx + 1  # Skip header row
+    if data_row_idx < len(rows):
+        row = rows[data_row_idx]
+        # Allele columns start at num_queries
+        for allele_idx in range(num_alleles):
+            col_idx = num_queries + allele_idx
+            if col_idx < len(row):
+                sim = float(row[col_idx]) if row[col_idx] else 0.0
+                max_similarities[allele_idx] = max(max_similarities[allele_idx], sim)
 
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match = allele_id
+# Find best match per locus
+results = {}
+profile_parts = []
 
-        if best_match is not None:
-            # Determine confidence based on coverage (placeholder)
-            confidence = best_similarity >= 0.95  # Simple heuristic
-            results[locus] = {
-                'allele_id': str(best_match.split('_')[-1]),  # Extract allele number
-                'similarity': float(best_similarity),
-                'confidence': bool(confidence)
-            }
+for locus, alleles in sorted(alleles_by_locus.items()):
+    best_match = None
+    best_similarity = -1.0
 
-    return results
+    for allele in alleles:
+        idx = allele['index']
+        if idx < len(max_similarities):
+            sim = max_similarities[idx]
+            if sim > best_similarity:
+                best_similarity = sim
+                best_match = allele['allele_id']
 
-def compute_similarity(query_file, allele_seq, kmer_size):
-    """Compute similarity between query and allele sequence."""
-    # Placeholder: For synthetic data matching, compute based on substring match
-    query_seqs = parse_fasta(query_file)
+    if best_match is not None:
+        results[locus] = {
+            'allele_id': best_match,
+            'similarity': max(0.0, min(1.0, best_similarity)),
+            'confidence': best_similarity > 0.9
+        }
+        profile_parts.append(f"{locus}_{best_match}")
 
-    # Get concatenated query sequence
-    query_seq = ''.join(query_seqs.values()) if query_seqs else ''
+# Write JSON output
+with open('allele_calls.json', 'w') as f:
+    json.dump(results, f, indent=2)
 
-    if not query_seq or not allele_seq:
-        return 0.0
+# Write profile string output
+with open('allele_profile.txt', 'w') as f:
+    f.write(','.join(profile_parts))
 
-    # Simple Jaccard-like similarity for k-mers
-    query_kmers = set()
-    allele_kmers = set()
-
-    for i in range(len(query_seq) - kmer_size + 1):
-        query_kmers.add(query_seq[i:i + kmer_size])
-
-    for i in range(len(allele_seq) - kmer_size + 1):
-        allele_kmers.add(allele_seq[i:i + kmer_size])
-
-    if not query_kmers or not allele_kmers:
-        return 0.0
-
-    intersection = len(query_kmers & allele_kmers)
-    union = len(query_kmers | allele_kmers)
-
-    return float(intersection) / float(union) if union > 0 else 0.0
-
-# Main execution
-try:
-    results = call_alleles(
-        '~{query_sequences}',
-        '~{allele_fasta}',
-        ~{kmer_size},
-        ~{min_coverage},
-        reads_file='~{reads_file}' if '~{reads_file}' != '' else None
-    )
-
-    # Write output JSON
-    with open('~{output_json}', 'w') as f:
-        json.dump(results, f, indent=2)
-
-    print("Allele calling completed successfully")
-
-except Exception as e:
-    print(f"Error: {e}", file=sys.stderr)
-    sys.exit(1)
-
-PYSCRIPT
+CODE
     >>>
 
+    output {
+        File results = "allele_calls.json"
+        String allele_profile = read_string("allele_profile.txt")
+    }
+
     runtime {
-        docker: "quay.io/biocontainers/sourmash:4.8.0--py310h1425a21_0"
-        memory: "4 GiB"
-        cpu: 2
-        disks: "100 GiB"
+        docker: "python:3.12-slim"
+        cpu: 1
+        memory: "2 GB"
     }
 }

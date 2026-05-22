@@ -134,9 +134,9 @@ The `Profile.__eq__` method handles flexible matching:
 
 ## Entry Points
 
-Defined in setup.cfg:
-- `torchbase` → `cli:cli` (main user commands)
-- `torchtools` → `cli:tools` (authoring tools)
+Defined in pyproject.toml:
+- `torchbase` → `torchbase.cli:cli` (main user commands)
+- `torchtools` → `torchbase.cli:tools` (authoring tools)
 
 ## Dependencies of Note
 

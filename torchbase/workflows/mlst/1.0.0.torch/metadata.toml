@@ -1,11 +1,33 @@
 namespace = "workflows"
 name = "mlst"
 version = "1.0.0"
-description = "Default MLST workflow for torchbase"
+
+[version_meta]
+strategy = "semver"
+timestamp = 1609459200
+
+[typing]
+method = "mlst"
+description = "Default MLST typing workflow"
+
+[maintainers]
+authors = ["Default Author"]
+email = ["default@example.com"]
+affiliations = ["Default Institute"]
+
+[description]
+short = "Default MLST typing workflow"
+long = "Standard MLST pipeline for microbial typing"
+taxa = ["Bacteria"]
+
+[thresholds]
+min_identity = 0.9
+min_coverage = 3
+ambiguity_threshold = 0.85
+ksize = 31
+sketch_size = 10
 
 [manifest]
 profiles = "profiles.tsv"
 workflow = "main.wdl"
-
-[typing]
-method = "mlst"
+resources = []
