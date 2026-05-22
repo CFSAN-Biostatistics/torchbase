@@ -119,7 +119,14 @@ filtering_needed = filter_info["filtering_enabled"] and (suspect_alleles or susp
 
 if not filtering_needed:
     # No filtering - just copy input to output
-    shutil.copy2(input_fasta, output_fasta)
+    try:
+        shutil.copy2(input_fasta, output_fasta)
+    except Exception as e:
+        import sys
+        print(f"ERROR copying file: {e}", file=sys.stderr)
+        print(f"  input_fasta: {input_fasta}", file=sys.stderr)
+        print(f"  output_fasta: {output_fasta}", file=sys.stderr)
+        raise
 else:
     # Perform filtering
     with open(input_fasta) as f_in:
