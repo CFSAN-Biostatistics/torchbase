@@ -163,9 +163,9 @@ class ReadsFile(click.Path):
 
 # We use this a lot
 
-ReadsParam = partial(click.option, 
-                     nargs=1, 
-                     default="", 
+ReadsParam = partial(click.option,
+                     nargs=1,
+                     default=None,
                      type=ReadsFile())
 
 #
@@ -175,7 +175,7 @@ ReadsParam = partial(click.option,
 @cli.command("run", context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
 @click.option("--cromwell-opts", "cromwell_options", nargs=1, default="", type=click.STRING)
 @torch
-@click.option("-m" "--method", nargs=1, default="main", type=click.STRING)
+@click.option("-m", "--method", nargs=1, default="main", type=click.STRING)
 @click.option("--workflow", default=None, help="Override workflow torch (namespace/name format)")
 @click.option("-o", "--output", default=None, help="Output file for results")
 @ReadsParam("-c", "--contigs")
@@ -196,7 +196,7 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         if (paired1 and not paired2) or (paired2 and not paired1):
             raise click.Abort("paired-end data requires two files; use -i/--interlaced for single-file paired-end data.")
         raise click.Abort("at least one reads option and file must be given.")
-    if len(filter(lambda v: v is not None, (contigs, reads, paired1, interlaced, longreads))) > 1:
+    if sum(1 for v in (contigs, reads, paired1, interlaced, longreads) if v is not None) > 1:
         raise click.Abort("provide reads in no more than one layout form.")
 
     try:
