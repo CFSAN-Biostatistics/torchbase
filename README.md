@@ -20,6 +20,9 @@ Torches are distributed via IPFS to enable versioned, reproducible typing across
 - **Reproducible typing** - Pin specific torch versions for deterministic results
 - **Distributed databases** - IPFS-based distribution eliminates single points of failure
 - **Multiple scheme support** - Convert from PubMLST, cgMLST, ShigaTyper, and more
+- **Flexible typing strategies** - Choose speed/accuracy tradeoff (fast/balanced/sensitive/auto)
+- **Generalized allelic typing** - Works for MLST, serotyping, and other allelic profile systems
+- **Multi-scheme torches** - Single torch can contain multiple typing schemes
 - **Quality analysis** - K-mer analysis for detecting similar/duplicate alleles
 - **Registry system** - Hierarchical configuration with fallback registries
 - **WDL workflows** - Standardized execution via miniwdl
@@ -61,9 +64,22 @@ torchbase info pubmlst/ecoli
 ### Run typing on sequencing data
 
 ```bash
+# Run with default balanced strategy
 torchbase run pubmlst/ecoli --contigs contigs.fasta
-torchbase run pubmlst/ecoli --reads reads_R1.fastq.gz reads_R2.fastq.gz
+
+# Choose typing strategy (fast/balanced/sensitive/auto)
+torchbase run pubmlst/ecoli --reads reads.fastq --strategy fast
+torchbase run pubmlst/ecoli --contigs contigs.fasta --strategy sensitive
+
+# Auto strategy analyzes input and picks optimal approach
+torchbase run pubmlst/ecoli --contigs contigs.fasta --strategy auto
 ```
+
+**Typing Strategies:**
+- `fast` - MinHash-based calling only, fastest (best for high-quality assemblies)
+- `balanced` - MinHash with alignment fallback if needed (default, good for most cases)
+- `sensitive` - Full alignment-based calling, most accurate (best for challenging samples)
+- `auto` - Automatically selects strategy based on input characteristics
 
 ### Pin a torch version
 
@@ -140,22 +156,85 @@ Torchbase consists of three layers:
 
 ### 3. CLI Layer (`torchbase/cli.py`)
 
-- `torchbase`: User-facing commands (list, pull, info, run)
+- `torchbase`: User-facing commands (list, pull, info, run, workflow)
 - `torchtools`: Authoring commands (build, version, convert)
+- Strategy-based workflow routing (fast/balanced/sensitive/auto)
 - Automatic file compression to zstandard format
 
+## Workflow Strategies
+
+Torchbase provides three built-in typing strategies that balance speed and accuracy:
+
+### Fast Strategy
+- **Method**: MinHash-based similarity only
+- **Speed**: Fastest (~1-2 min for typical MLST)
+- **Best for**: High-quality assemblies, large batches, screening
+- **Pipeline**: Sketch → Compare → Call alleles → Lookup profile
+
+### Balanced Strategy (Default)
+- **Method**: MinHash with conditional alignment fallback
+- **Speed**: Moderate (~2-5 min)
+- **Best for**: Most use cases, mixed quality data
+- **Pipeline**: Sketch → Compare → Call alleles → If confidence <85% → Align → Refine
+
+### Sensitive Strategy
+- **Method**: Full alignment-based calling
+- **Speed**: Slower (~5-15 min)
+- **Best for**: Novel alleles, difficult samples, maximum accuracy
+- **Pipeline**: Sketch (guide) → Align → Refine calls → Lookup profile
+
+### Auto Strategy
+- **Method**: Analyzes input and picks appropriate strategy
+- **Logic**: Contigs → fast, Reads → balanced, Edge cases → balanced
+- **Best for**: Unknown data quality, automated pipelines
+
+### Inspecting Workflows
+
+Visualize any workflow's pipeline:
+
+```bash
+# View built-in workflow
+torchbase workflow inspect balanced
+
+# View torch-embedded workflow
+torchbase workflow inspect path/to/torch/
+```
+
 ## Torch Package Structure
+
+### Single-Scheme Torch (Simple)
 
 ```
 <namespace>/<torchname>/<version>.torch/
 ├── metadata.toml              # Package metadata, citations
-├── <buildname>.profiles.tsv   # Allelic profile table
-├── <buildname>.wdl            # Main WDL workflow
-├── <torchname>.build.wdl      # Build workflow
+├── profiles.tsv               # Allelic profile table
+├── main.wdl                   # Optional: custom workflow
 └── _resources/                # Reference FASTA files
     ├── locus1.fasta
     └── locus2.fasta
 ```
+
+### Multi-Scheme Torch (Advanced)
+
+```
+<namespace>/<torchname>/<version>.torch/
+├── metadata.toml
+└── schemes/
+    ├── organism1/
+    │   ├── profiles.tsv
+    │   └── alleles/
+    │       ├── locus1.fasta
+    │       └── locus2.fasta
+    └── organism2/
+        ├── profiles.tsv
+        └── alleles/
+            ├── locus1.fasta
+            └── locus2.fasta
+```
+
+### Custom Workflows
+
+Torches can include a `main.wdl` workflow for custom typing logic. If present, the torch's workflow is used instead of built-in strategies. Note: `--strategy` flag cannot be used with torch-embedded workflows.
 
 ## Quality Analysis
 
