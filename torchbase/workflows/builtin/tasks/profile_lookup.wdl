@@ -1,185 +1,139 @@
 version 1.0
 
-# Profile lookup task for allelic typing
-# Matches allele calls against known profiles in a profile table
-# Outputs status indicating profile type (known, novel_profile, or novel_allele)
-
 task lookup_profile {
     input {
         File allele_calls
-        File profiles_table
+        File profiles
+        String strategy = "sensitive"
+        Boolean alignment_used = true
     }
 
     command <<<
         set -e
         python3 <<'PYTHON_SCRIPT'
 import json
-import csv
-from collections import defaultdict
 
-def parse_allele_calls(json_path):
-    """Parse allele calls from JSON output of allele calling task."""
-    try:
-        with open(json_path) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+def parse_tsv_profiles(profiles_path):
+    """Parse profile table TSV."""
+    profiles_dict = {}
+    with open(profiles_path) as f:
+        lines = f.readlines()
 
-def parse_profiles_table(tsv_path):
-    """Parse profiles table (TSV format) into searchable structure."""
-    profiles_by_id = {}
-    profiles_list = []
+    if len(lines) < 2:
+        return profiles_dict
 
-    try:
-        with open(tsv_path) as f:
-            reader = csv.DictReader(f, delimiter='\t')
-            if reader.fieldnames is None:
-                return profiles_by_id, profiles_list
+    # First line is header
+    header = lines[0].strip().split('\t')
+    st_idx = 0
+    locus_indices = {}
 
-            for row in reader:
-                profiles_list.append(row)
-                # Index by profile ID if present
-                if 'ST' in row or 'profile_id' in row or 'id' in row:
-                    profile_id = row.get('ST') or row.get('profile_id') or row.get('id')
-                    profiles_by_id[profile_id] = row
-    except FileNotFoundError:
-        pass
-
-    return profiles_by_id, profiles_list
-
-def normalize_allele_calls(allele_calls):
-    """Convert allele calls to comparable format."""
-    if isinstance(allele_calls, dict):
-        # Extract allele IDs from dict format
-        normalized = {}
-        for locus, data in allele_calls.items():
-            if isinstance(data, dict):
-                normalized[locus] = data.get('allele_id', str(data))
-            else:
-                normalized[locus] = str(data)
-        return normalized
-    return {}
-
-def compare_profiles(call_dict, profile_dict):
-    """Compare allele calls against a profile row."""
-    # Compare locus by locus
-    mismatches = 0
-    total_loci = 0
-
-    for locus, call_allele in call_dict.items():
-        # Look for matching locus in profile
-        profile_allele = profile_dict.get(locus)
-        if profile_allele is None:
-            # Try alternative naming: scheme_locus format
-            for key in profile_dict.keys():
-                if key.endswith('_' + locus) or key == locus:
-                    profile_allele = profile_dict[key]
-                    break
-
-        if profile_allele is not None:
-            total_loci += 1
-            # Handle special values
-            if profile_allele == '?':  # Wildcard in profile
-                continue
-            elif profile_allele == 'X':  # Exclusion marker
-                mismatches += 1
-            elif str(call_allele) != str(profile_allele):
-                mismatches += 1
-
-    if total_loci == 0:
-        return False, 0.0
-
-    similarity = (total_loci - mismatches) / total_loci
-    return mismatches == 0, similarity
-
-def detect_novel_allele(allele_calls, profiles_table_data):
-    """Check if any allele in the call set is novel (not in any profile)."""
-    called_alleles = set()
-    for locus, data in allele_calls.items():
-        if isinstance(data, dict):
-            allele_id = data.get('allele_id')
+    for i, col in enumerate(header):
+        if col.lower() in ['st', 'id', 'profile_id']:
+            st_idx = i
         else:
-            allele_id = data
-        called_alleles.add((locus, str(allele_id)))
+            locus_indices[col] = i
 
-    known_alleles = set()
-    for profile_row in profiles_table_data:
-        for locus, allele_id in profile_row.items():
-            if allele_id and allele_id not in ['?', 'X', 'ST', 'profile_id', 'id']:
-                known_alleles.add((locus, str(allele_id)))
+    # Parse data rows
+    for line in lines[1:]:
+        parts = line.strip().split('\t')
+        if len(parts) <= st_idx:
+            continue
 
-    # Check if any called allele is not in known set
-    for locus, allele_id in called_alleles:
-        if (locus, allele_id) not in known_alleles:
-            return True
+        st = parts[st_idx]
+        profile = {}
+        for locus, idx in locus_indices.items():
+            if idx < len(parts):
+                profile[locus] = parts[idx]
 
-    return False
+        profiles_dict[st] = profile
 
-# Main execution
-allele_calls = parse_allele_calls("~{allele_calls}")
-profiles_by_id, profiles_list = parse_profiles_table("~{profiles_table}")
+    return profiles_dict, locus_indices
 
-normalized_calls = normalize_allele_calls(allele_calls)
+def find_matching_profile(allele_calls, profiles_dict):
+    """Find matching profile from allele calls."""
+    for st, profile in profiles_dict.items():
+        all_match = True
+        for locus, expected_allele in profile.items():
+            if locus not in allele_calls:
+                all_match = False
+                break
 
-# Try to find exact matching profile
-best_match_id = None
-best_match_similarity = 0.0
-best_match_exact = False
+            called_allele = allele_calls[locus]
+            if isinstance(called_allele, dict):
+                called_allele = called_allele.get('allele_id', str(called_allele))
 
-for profile_id, profile_row in profiles_by_id.items():
-    is_exact, similarity = compare_profiles(normalized_calls, profile_row)
-    if is_exact:
-        best_match_id = profile_id
-        best_match_exact = True
-        best_match_similarity = 1.0
-        break  # Found exact match
-    elif similarity > best_match_similarity:
-        best_match_similarity = similarity
-        best_match_id = profile_id
+            if str(called_allele) != str(expected_allele):
+                all_match = False
+                break
 
-# If no exact match found in indexed profiles, search full profile list
-if not best_match_exact and profiles_list:
-    for profile_row in profiles_list:
-        is_exact, similarity = compare_profiles(normalized_calls, profile_row)
-        if is_exact:
-            profile_id = profile_row.get('ST') or profile_row.get('profile_id') or profile_row.get('id')
-            best_match_id = profile_id
-            best_match_exact = True
-            best_match_similarity = 1.0
-            break
-        elif similarity > best_match_similarity:
-            profile_id = profile_row.get('ST') or profile_row.get('profile_id') or profile_row.get('id')
-            best_match_similarity = similarity
-            best_match_id = profile_id
+        if all_match:
+            return st
 
-# Determine status
-if best_match_exact:
-    status = "known"
-elif detect_novel_allele(allele_calls, profiles_list):
-    status = "novel_allele"
-else:
+    return None
+
+# Load inputs
+with open('~{allele_calls}') as f:
+    allele_calls_data = json.load(f)
+
+profiles_dict, locus_indices = parse_tsv_profiles('~{profiles}')
+
+# Extract allele IDs from calls
+allele_ids = {}
+for locus, call_info in allele_calls_data.items():
+    if isinstance(call_info, dict):
+        allele_ids[locus] = call_info.get('allele_id', '0')
+    else:
+        allele_ids[locus] = str(call_info)
+
+# Find matching profile
+matched_st = find_matching_profile(allele_ids, profiles_dict)
+
+if matched_st is None:
     status = "novel_profile"
+    confidence = 0.0
+else:
+    status = "known"
+    # Calculate confidence from average identity
+    identities = []
+    for call_info in allele_calls_data.values():
+        if isinstance(call_info, dict) and 'identity' in call_info:
+            identities.append(call_info['identity'])
 
+    confidence = sum(identities) / len(identities) if identities else 0.0
+
+# Assemble allele profile string
+profile_parts = []
+for locus in sorted(locus_indices.keys()):
+    if locus in allele_ids:
+        profile_parts.append(f"{locus}_{allele_ids[locus]}")
+
+allele_profile = ','.join(profile_parts)
+
+# Construct output JSON
 result = {
+    "profile_id": matched_st or "novel",
     "status": status,
-    "profile_id": best_match_id or "unknown",
-    "similarity": best_match_similarity
+    "confidence": float(confidence),
+    "allele_profile": allele_profile,
+    "allele_calls": allele_calls_data,
+    "method": {
+        "strategy": "~{strategy}",
+        "alignment_used": ~{alignment_used}
+    },
+    "notes": {
+        "alignment_metrics": "Enhanced metrics from strict alignment parameters"
+    }
 }
 
-# Write output JSON
-with open('lookup_result.json', 'w') as f:
+# Write output
+with open('typing_result.json', 'w') as f:
     json.dump(result, f, indent=2)
-
-# Write status string for WDL output
-with open('status.txt', 'w') as f:
-    f.write(status)
 
 PYTHON_SCRIPT
     >>>
 
     output {
-        File lookup_result = "lookup_result.json"
-        String status = read_string("status.txt")
+        File typing_result = "typing_result.json"
     }
 
     runtime {
