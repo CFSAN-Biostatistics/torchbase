@@ -709,6 +709,7 @@ class TestWorkflowTorchConvention:
             assert torch.workflow is None
 
 
+@pytest.mark.skip(reason="Issue #61: Default workflow torch moved to examples/ and replaced with synthetic examples")
 class TestDefaultWorkflowTorchLocation:
     """Test that default workflow torch exists at well-known location."""
 
