@@ -124,6 +124,30 @@ def _info(torch):
     pass
 
 
+@cli.group("workflow")
+def workflow():
+    "Workflow management and inspection commands."
+    pass
+
+
+@workflow.command("inspect")
+@click.argument("workflow_spec", required=True)
+@click.option("--verbose", is_flag=True, default=False, help="Show detailed parameter information.")
+def inspect(workflow_spec, verbose=False):
+    "Inspect a workflow and display its structure as an ASCII diagram."
+    from torchbase.workflow_inspect import inspect_workflow
+
+    try:
+        diagram = inspect_workflow(workflow_spec, verbose=verbose)
+        click.echo(diagram)
+    except FileNotFoundError as e:
+        raise click.ClickException(f"Workflow not found: {e}")
+    except ValueError as e:
+        raise click.ClickException(f"WDL parsing error: {e}")
+    except Exception as e:
+        raise click.ClickException(f"Error inspecting workflow: {e}")
+
+
 #
 # File handling helper
 # 
