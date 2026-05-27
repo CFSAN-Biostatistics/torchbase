@@ -1,9 +1,5 @@
 version 1.0
 
-# MinHash sketching and comparison tasks for allele matching
-# These tasks provide sourmash-based sketch generation and comparison
-# for fast allele calling and similarity estimation
-
 task sketch_sequences {
     input {
         File sequences
@@ -42,6 +38,7 @@ task compare_sketches {
     input {
         File query_sketch
         File allele_sketch
+        File allele_fasta
     }
 
     command <<<
@@ -71,6 +68,136 @@ task compare_sketches {
 
     runtime {
         docker: "quay.io/biocontainers/sourmash:4.8.11--hdfd78af_0"
+        cpu: 1
+        memory: "2 GB"
+    }
+}
+
+task call_alleles_minhash {
+    input {
+        File similarity_matrix
+        File query_sequences
+        File allele_fasta
+        Float confidence_threshold = 0.85
+    }
+
+    command <<<
+        set -e
+        python3 <<CODE
+import json
+import csv
+from collections import defaultdict
+
+def parse_fasta(fasta_path):
+    sequences = []
+    with open(fasta_path) as f:
+        current_header = None
+        current_seq = []
+        for line in f:
+            line = line.strip()
+            if line.startswith('>'):
+                if current_header is not None:
+                    sequences.append((current_header, ''.join(current_seq)))
+                current_header = line[1:]
+                current_seq = []
+            else:
+                current_seq.append(line)
+        if current_header is not None:
+            sequences.append((current_header, ''.join(current_seq)))
+    return sequences
+
+def extract_locus_and_allele(header):
+    parts = header.split('_')
+    if len(parts) >= 2:
+        allele_id = parts[-1]
+        locus = '_'.join(parts[:-1])
+        return locus, allele_id
+    return header, "unknown"
+
+# Parse inputs
+query_seqs = parse_fasta("~{query_sequences}")
+allele_seqs = parse_fasta("~{allele_fasta}")
+
+# Group alleles by locus
+alleles_by_locus = defaultdict(list)
+for idx, (header, seq) in enumerate(allele_seqs):
+    locus, allele_id = extract_locus_and_allele(header)
+    alleles_by_locus[locus].append({
+        'allele_id': allele_id,
+        'header': header,
+        'index': idx
+    })
+
+# Read similarity matrix
+with open("~{similarity_matrix}") as f:
+    reader = csv.reader(f)
+    rows = list(reader)
+
+# Handle empty similarity matrix
+if len(rows) <= 1:
+    # Empty result
+    with open('allele_calls.json', 'w') as f:
+        json.dump({}, f)
+    exit(0)
+
+# Extract similarity scores (query vs alleles)
+num_queries = len(query_seqs)
+num_alleles = len(allele_seqs)
+
+# Validate matrix dimensions
+expected_size = num_queries + num_alleles
+if len(rows) != expected_size + 1:
+    raise ValueError(f"Matrix size mismatch: expected {expected_size+1} rows, got {len(rows)}")
+
+# Extract max similarity across all queries for each allele
+max_similarities = [0.0] * num_alleles
+
+for query_idx in range(num_queries):
+    data_row_idx = query_idx + 1
+    if data_row_idx < len(rows):
+        row = rows[data_row_idx]
+        for allele_idx in range(num_alleles):
+            col_idx = num_queries + allele_idx
+            if col_idx < len(row):
+                sim = float(row[col_idx]) if row[col_idx] else 0.0
+                max_similarities[allele_idx] = max(max_similarities[allele_idx], sim)
+
+# Find best match per locus
+results = {}
+
+for locus, alleles in sorted(alleles_by_locus.items()):
+    best_match = None
+    best_similarity = -1.0
+
+    for allele in alleles:
+        idx = allele['index']
+        if idx < len(max_similarities):
+            sim = max_similarities[idx]
+            if sim > best_similarity:
+                best_similarity = sim
+                best_match = allele['allele_id']
+
+    if best_match is not None:
+        confidence = best_similarity >= ~{confidence_threshold}
+        results[locus] = {
+            'allele_id': best_match,
+            'similarity': max(0.0, min(1.0, best_similarity)),
+            'confidence': confidence
+        }
+
+# Write JSON output
+with open('allele_calls.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+CODE
+    >>>
+
+    output {
+        File allele_calls = "allele_calls.json"
+    }
+
+    runtime {
+        docker: "python:3.12-slim"
         cpu: 1
         memory: "2 GB"
     }
