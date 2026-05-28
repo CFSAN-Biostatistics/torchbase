@@ -3,137 +3,140 @@ version 1.0
 task lookup_profile {
     input {
         File allele_calls
-        File profiles
-        String strategy = "sensitive"
-        Boolean alignment_used = true
+        File profiles_table
+        String strategy = "balanced"
+        Boolean alignment_used = false
     }
 
     command <<<
         set -e
         python3 <<'PYTHON_SCRIPT'
 import json
+import csv
+from collections import defaultdict
 
-def parse_tsv_profiles(profiles_path):
-    """Parse profile table TSV."""
-    profiles_dict = {}
-    with open(profiles_path) as f:
-        lines = f.readlines()
+def parse_allele_calls(json_path):
+    """Parse JSON allele calls from minhash or alignment."""
+    with open(json_path) as f:
+        return json.load(f)
 
-    if len(lines) < 2:
-        return profiles_dict
+def parse_profiles_table(tsv_path):
+    """Parse profiles TSV file."""
+    profiles = []
+    loci_order = []
+    with open(tsv_path) as f:
+        reader = csv.DictReader(f, delimiter='\t')
+        for row in reader:
+            profiles.append(row)
+        # Get loci order from header (skip first column which is ID)
+        if reader.fieldnames:
+            loci_order = [col for col in reader.fieldnames if col.upper() != 'ST']
+    return profiles, loci_order
 
-    # First line is header
-    header = lines[0].strip().split('\t')
-    st_idx = 0
-    locus_indices = {}
-
-    for i, col in enumerate(header):
-        if col.lower() in ['st', 'id', 'profile_id']:
-            st_idx = i
+def build_profile_string(allele_calls, loci_order):
+    """Build profile string from allele calls."""
+    profile_parts = []
+    for locus in loci_order:
+        if locus in allele_calls:
+            allele_id = allele_calls[locus].get('allele_id', '?')
+            profile_parts.append(str(allele_id))
         else:
-            locus_indices[col] = i
+            profile_parts.append('?')
+    return ','.join(profile_parts)
 
-    # Parse data rows
-    for line in lines[1:]:
-        parts = line.strip().split('\t')
-        if len(parts) <= st_idx:
+def lookup_profile(profile_str, profiles, loci_order):
+    """Look up profile in profile table."""
+    for profile in profiles:
+        # Build table profile string
+        table_parts = []
+        for locus in loci_order:
+            if locus in profile:
+                table_parts.append(profile[locus])
+        table_profile = ','.join(table_parts)
+
+        # Check for exact match or wildcards
+        match = True
+        query_parts = profile_str.split(',')
+        table_parts_list = table_profile.split(',')
+
+        if len(query_parts) != len(table_parts_list):
             continue
 
-        st = parts[st_idx]
-        profile = {}
-        for locus, idx in locus_indices.items():
-            if idx < len(parts):
-                profile[locus] = parts[idx]
-
-        profiles_dict[st] = profile
-
-    return profiles_dict, locus_indices
-
-def find_matching_profile(allele_calls, profiles_dict):
-    """Find matching profile from allele calls."""
-    for st, profile in profiles_dict.items():
-        all_match = True
-        for locus, expected_allele in profile.items():
-            if locus not in allele_calls:
-                all_match = False
+        for query_part, table_part in zip(query_parts, table_parts_list):
+            if query_part == '?':  # Wildcard matches anything
+                continue
+            if table_part == '?':  # Wildcard in table matches anything
+                continue
+            if query_part != table_part:
+                match = False
                 break
 
-            called_allele = allele_calls[locus]
-            if isinstance(called_allele, dict):
-                called_allele = called_allele.get('allele_id', str(called_allele))
+        if match:
+            # Found matching profile
+            st_col = None
+            for col in profile.keys():
+                if col.upper() == 'ST':
+                    st_col = col
+                    break
+            if st_col:
+                return profile[st_col], "known_profile"
 
-            if str(called_allele) != str(expected_allele):
-                all_match = False
-                break
+    # No exact match found
+    return None, "novel_profile"
 
-        if all_match:
-            return st
+# Main
+allele_calls = parse_allele_calls("~{allele_calls}")
+profiles, loci_order = parse_profiles_table("~{profiles_table}")
 
-    return None
+# Build profile string
+profile_str = build_profile_string(allele_calls, loci_order)
 
-# Load inputs
-with open('~{allele_calls}') as f:
-    allele_calls_data = json.load(f)
+# Lookup profile
+profile_id, status = lookup_profile(profile_str, profiles, loci_order)
 
-profiles_dict, locus_indices = parse_tsv_profiles('~{profiles}')
+# Calculate confidence from allele calls
+confidences = []
+for locus, call in allele_calls.items():
+    if 'confidence' in call:
+        confidences.append(1.0 if call['confidence'] else 0.0)
+    elif 'similarity' in call or 'identity' in call:
+        score = call.get('similarity', call.get('identity', 0.0))
+        confidences.append(float(score))
 
-# Extract allele IDs from calls
-allele_ids = {}
-for locus, call_info in allele_calls_data.items():
-    if isinstance(call_info, dict):
-        allele_ids[locus] = call_info.get('allele_id', '0')
-    else:
-        allele_ids[locus] = str(call_info)
+overall_confidence = sum(confidences) / len(confidences) if confidences else 0.0
 
-# Find matching profile
-matched_st = find_matching_profile(allele_ids, profiles_dict)
+# Determine if alignment was used
+alignment_used = ~{alignment_used}
 
-if matched_st is None:
-    status = "novel_profile"
-    confidence = 0.0
-else:
-    status = "known"
-    # Calculate confidence from average identity
-    identities = []
-    for call_info in allele_calls_data.values():
-        if isinstance(call_info, dict) and 'identity' in call_info:
-            identities.append(call_info['identity'])
-
-    confidence = sum(identities) / len(identities) if identities else 0.0
-
-# Assemble allele profile string
-profile_parts = []
-for locus in sorted(locus_indices.keys()):
-    if locus in allele_ids:
-        profile_parts.append(f"{locus}_{allele_ids[locus]}")
-
-allele_profile = ','.join(profile_parts)
-
-# Construct output JSON
+# Build result
 result = {
-    "profile_id": matched_st or "novel",
+    "profile_id": profile_id if profile_id else "unknown",
+    "profile_type": "sequence_type",
     "status": status,
-    "confidence": float(confidence),
-    "allele_profile": allele_profile,
-    "allele_calls": allele_calls_data,
+    "confidence": max(0.0, min(1.0, overall_confidence)),
+    "allele_profile": profile_str,
+    "allele_calls": allele_calls,
     "method": {
         "strategy": "~{strategy}",
-        "alignment_used": ~{alignment_used}
+        "alignment_used": alignment_used,
+        "tools": ["sourmash", "minimap2"] if alignment_used else ["sourmash"]
     },
     "notes": {
-        "alignment_metrics": "Enhanced metrics from strict alignment parameters"
+        "num_loci": len(loci_order),
+        "num_called": len(allele_calls),
+        "mean_confidence": overall_confidence
     }
 }
 
-# Write output
-with open('typing_result.json', 'w') as f:
+# Write result
+with open('profile_result.json', 'w') as f:
     json.dump(result, f, indent=2)
 
 PYTHON_SCRIPT
     >>>
 
     output {
-        File typing_result = "typing_result.json"
+        File result = "profile_result.json"
     }
 
     runtime {

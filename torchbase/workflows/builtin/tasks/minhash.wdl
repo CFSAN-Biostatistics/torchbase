@@ -73,11 +73,12 @@ task compare_sketches {
     }
 }
 
-task call_alleles_from_sketch {
+task call_alleles_minhash {
     input {
         File similarity_matrix
         File query_sequences
         File allele_fasta
+        Float confidence_threshold = 0.85
     }
 
     command <<<
@@ -137,8 +138,6 @@ if len(rows) <= 1:
     # Empty result
     with open('allele_calls.json', 'w') as f:
         json.dump({}, f)
-    with open('allele_profile.txt', 'w') as f:
-        f.write('')
     exit(0)
 
 # Extract similarity scores (query vs alleles)
@@ -165,7 +164,6 @@ for query_idx in range(num_queries):
 
 # Find best match per locus
 results = {}
-profile_parts = []
 
 for locus, alleles in sorted(alleles_by_locus.items()):
     best_match = None
@@ -180,27 +178,22 @@ for locus, alleles in sorted(alleles_by_locus.items()):
                 best_match = allele['allele_id']
 
     if best_match is not None:
+        confidence = best_similarity >= ~{confidence_threshold}
         results[locus] = {
             'allele_id': best_match,
             'similarity': max(0.0, min(1.0, best_similarity)),
-            'confidence': best_similarity > 0.9
+            'confidence': confidence
         }
-        profile_parts.append(f"{locus}_{best_match}")
 
 # Write JSON output
 with open('allele_calls.json', 'w') as f:
     json.dump(results, f, indent=2)
 
-# Write profile string output
-with open('allele_profile.txt', 'w') as f:
-    f.write(','.join(profile_parts))
-
 CODE
     >>>
 
     output {
-        File results = "allele_calls.json"
-        String allele_profile = read_string("allele_profile.txt")
+        File allele_calls = "allele_calls.json"
     }
 
     runtime {

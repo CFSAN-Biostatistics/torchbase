@@ -40,24 +40,24 @@ workflow sensitive_typing {
     # Step 4: ALWAYS run full alignment with strict parameters using minimap2
     # In sensitive mode, alignment is not conditional - it always runs
     # Uses minimap2 with asm5 or asm5+eqx preset for high accuracy
-    call alignment.run_alignment as alignment_call {
+    call alignment.align_and_call as alignment_call {
         input:
             query_sequences = query_sequences,
             allele_fasta = allele_database,
-            preset = preset,
-            confidence_threshold = confidence_threshold
+            input_type = "contigs",
+            identity_threshold = confidence_threshold
     }
 
     # Step 5: Lookup profile from alignment-based allele calls
     call profile_lookup.lookup_profile as profile_call {
         input:
-            allele_calls = alignment_call.alignment_calls,
-            profiles = profiles,
+            allele_calls = alignment_call.alignment_results,
+            profiles_table = profiles,
             strategy = "sensitive",
             alignment_used = true
     }
 
     output {
-        File typing_result = profile_call.typing_result
+        File typing_result = profile_call.result
     }
 }

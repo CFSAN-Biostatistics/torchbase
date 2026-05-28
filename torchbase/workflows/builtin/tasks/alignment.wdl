@@ -1,25 +1,27 @@
 version 1.0
 
-task run_alignment {
+task align_and_call {
     input {
         File query_sequences
         File allele_fasta
-        String preset = "asm5"
-        Float confidence_threshold = 0.95
+        String input_type = "contigs"
+        Float identity_threshold = 0.90
     }
 
     command <<<
         set -e
-        # Install minimap2
-        apt-get update && apt-get install -y minimap2 && rm -rf /var/lib/apt/lists/*
+        # Install minimap2 if needed
+        which minimap2 > /dev/null || (apt-get update && apt-get install -y minimap2 && rm -rf /var/lib/apt/lists/*)
 
         python3 <<'PYTHON_SCRIPT'
 import json
 import subprocess
+import tempfile
 from collections import defaultdict
+import os
 
 def parse_fasta(fasta_path):
-    """Parse FASTA file into dictionary of header -> sequence."""
+    """Parse FASTA file into dict of {header: sequence}."""
     sequences = {}
     with open(fasta_path) as f:
         current_header = None
@@ -46,36 +48,22 @@ def extract_locus_and_allele(header):
         return locus, allele_id
     return header, "unknown"
 
-# Parse inputs
-query_seqs = parse_fasta("~{query_sequences}")
-allele_seqs = parse_fasta("~{allele_fasta}")
+def run_minimap2_alignment(query_sequences, allele_fasta, preset):
+    """Run minimap2 to align queries against allele database."""
+    # Write queries to temporary file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False) as f:
+        query_file = f.name
+        for header, seq in query_sequences.items():
+            f.write(f">{header}\n{seq}\n")
 
-# Group alleles by locus
-alleles_by_locus = defaultdict(list)
-for header, seq in allele_seqs.items():
-    locus, allele_id = extract_locus_and_allele(header)
-    alleles_by_locus[locus].append({
-        'allele_id': allele_id,
-        'header': header,
-        'sequence': seq
-    })
-
-# Run alignment for each query sequence
-alignment_results = {}
-
-for query_name, query_seq in query_seqs.items():
-    # Write query to temporary file
-    query_file = f"{query_name}_query.fasta"
-    with open(query_file, 'w') as f:
-        f.write(f">{query_name}\n{query_seq}\n")
-
-    # Run minimap2 with specified preset
-    sam_file = f"{query_name}_alignment.sam"
+    # Run minimap2
+    sam_file = "alignment.sam"
     cmd = [
         'minimap2',
         '-a',
-        '-x', '~{preset}',
-        '~{allele_fasta}',
+        '-x', preset,
+        '--secondary=no',
+        allele_fasta,
         query_file,
         '-o', sam_file
     ]
@@ -83,12 +71,14 @@ for query_name, query_seq in query_seqs.items():
     try:
         subprocess.run(cmd, check=True, capture_output=True)
     except subprocess.CalledProcessError as e:
-        print(f"Warning: minimap2 failed for {query_name}")
-        alignment_results[query_name] = {}
-        continue
+        print(f"Warning: minimap2 failed: {e}")
+        return {}
+    finally:
+        os.unlink(query_file)
 
-    # Parse SAM file to extract alignment metrics
-    alignments_by_ref = {}
+    # Parse SAM file to extract best alignment per query
+    results = {}
+    query_to_best = {}
 
     try:
         with open(sam_file) as f:
@@ -99,18 +89,14 @@ for query_name, query_seq in query_seqs.items():
                 if len(fields) < 11:
                     continue
 
+                query_name = fields[0]
                 ref_name = fields[2]
                 mapq = int(fields[4])
 
                 if mapq == 0 or ref_name == '*':  # Skip unmapped
                     continue
 
-                # Extract alignment stats
-                query_start = int(fields[3])
-                match_count = 0
-                mismatch_count = 0
-
-                # Look for NM tag (number of mismatches)
+                # Extract identity from NM tag (number of mismatches)
                 nm = 0
                 for tag in fields[11:]:
                     if tag.startswith('NM:i:'):
@@ -118,64 +104,58 @@ for query_name, query_seq in query_seqs.items():
                         break
 
                 # Calculate identity
-                query_len = len(query_seq)
-                identity = max(0.0, (query_len - nm) / query_len)
+                query_len = int(fields[8]) if int(fields[8]) > 0 else len(query_sequences.get(query_name, ""))
+                identity = max(0.0, (query_len - nm) / query_len) if query_len > 0 else 0.0
 
-                if ref_name not in alignments_by_ref:
-                    alignments_by_ref[ref_name] = {
+                # Track best alignment per query
+                if query_name not in query_to_best or identity > query_to_best[query_name]['identity']:
+                    locus, allele_id = extract_locus_and_allele(ref_name)
+                    query_to_best[query_name] = {
+                        'allele_id': allele_id,
                         'identity': identity,
-                        'mapq': mapq,
-                        'mismatches': nm
+                        'locus': locus
                     }
-                else:
-                    # Keep best match
-                    if identity > alignments_by_ref[ref_name]['identity']:
-                        alignments_by_ref[ref_name] = {
-                            'identity': identity,
-                            'mapq': mapq,
-                            'mismatches': nm
-                        }
     except Exception as e:
-        print(f"Warning: Error parsing SAM for {query_name}: {e}")
+        print(f"Warning: Error parsing SAM: {e}")
 
-    alignment_results[query_name] = alignments_by_ref
-
-# Convert alignments to allele calls per locus
-allele_calls = {}
-
-for query_name, alignments in alignment_results.items():
-    # Group alignments by locus
-    by_locus = defaultdict(list)
-    for ref_header, metrics in alignments.items():
-        locus, allele_id = extract_locus_and_allele(ref_header)
-        by_locus[locus].append({
-            'allele_id': allele_id,
-            'identity': metrics['identity'],
-            'mapq': metrics['mapq'],
-            'mismatches': metrics['mismatches']
-        })
-
-    # Select best match per locus
-    for locus, candidates in by_locus.items():
-        if candidates:
-            best = max(candidates, key=lambda x: x['identity'])
-            allele_calls[locus] = {
+    # Aggregate by locus (take best identity per locus across all queries)
+    locus_results = defaultdict(lambda: {'allele_id': None, 'identity': 0.0})
+    for query_name, best in query_to_best.items():
+        locus = best['locus']
+        if best['identity'] > locus_results[locus]['identity']:
+            locus_results[locus] = {
                 'allele_id': best['allele_id'],
-                'identity': float(best['identity']),
-                'mapq': int(best['mapq']),
-                'mismatches': int(best['mismatches']),
-                'confidence': best['identity'] >= ~{confidence_threshold}
+                'identity': best['identity']
             }
 
+    return dict(locus_results)
+
+# Main
+query_seqs = parse_fasta("~{query_sequences}")
+input_type = "~{input_type}"
+preset = "sr" if input_type == "reads" else "asm5"
+
+alignment_results = run_minimap2_alignment(query_seqs, "~{allele_fasta}", preset)
+
+# Format output with confidence
+output_results = {}
+for locus, result in alignment_results.items():
+    identity = result['identity']
+    output_results[locus] = {
+        'allele_id': result['allele_id'],
+        'identity': max(0.0, min(1.0, identity)),
+        'confidence': identity >= ~{identity_threshold}
+    }
+
 # Write JSON output
-with open('alignment_calls.json', 'w') as f:
-    json.dump(allele_calls, f, indent=2)
+with open('alignment_results.json', 'w') as f:
+    json.dump(output_results, f, indent=2)
 
 PYTHON_SCRIPT
     >>>
 
     output {
-        File alignment_calls = "alignment_calls.json"
+        File alignment_results = "alignment_results.json"
     }
 
     runtime {
