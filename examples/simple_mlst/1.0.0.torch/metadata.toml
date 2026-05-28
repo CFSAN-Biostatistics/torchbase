@@ -1,0 +1,32 @@
+namespace = "examples"
+name = "simple_mlst"
+version = "1.0.0"
+
+[version_meta]
+strategy = "semver"
+timestamp = 1609459200
+
+[typing]
+method = "mlst"
+description = "Simple synthetic MLST example for documentation and testing"
+
+[maintainers]
+authors = ["Torchbase Project"]
+email = ["info@torchbase.example.com"]
+affiliations = ["Example Organization"]
+
+[description]
+short = "Simple synthetic MLST example torch"
+long = "A minimal example torch demonstrating single-scheme (flat) structure with 3 loci and 5 profiles for testing and documentation purposes"
+taxa = ["Synthetic"]
+
+[thresholds]
+min_identity = 0.9
+min_coverage = 3
+ambiguity_threshold = 0.85
+ksize = 31
+sketch_size = 10
+
+[manifest]
+profiles = "profiles.tsv"
+resources = []
