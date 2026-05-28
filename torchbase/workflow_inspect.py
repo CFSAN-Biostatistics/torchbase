@@ -59,13 +59,9 @@ class WDLParser:
         if open_braces != close_braces:
             raise ValueError(f"WDL syntax error: mismatched braces ({open_braces} open, {close_braces} close)")
 
-        # Check for import statements with missing files (basic check)
-        import_matches = re.findall(r'import\s+"([^"]+)"', self.content)
-        if import_matches:
-            for import_path in import_matches:
-                # For now, just flag it - actual file checking happens later
-                if import_path and not import_path.startswith('http'):
-                    raise ValueError(f"WDL import error: cannot resolve '{import_path}'")
+        # Note: We don't validate import paths here since they're relative to the WDL file location
+        # and may not be resolvable from the current working directory. The WDL engine will
+        # handle import resolution during actual execution.
 
         # Check for clearly malformed syntax patterns
         if re.search(r'\{\{\{', self.content) or re.search(r'\}\}\}', self.content):
