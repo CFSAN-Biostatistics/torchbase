@@ -1,0 +1,32 @@
+namespace = "examples"
+name = "multi_organism"
+version = "1.0.0"
+
+[version_meta]
+strategy = "semver"
+timestamp = 1609459200
+
+[typing]
+method = "mlst"
+description = "Multi-organism synthetic example with multiple schemes"
+
+[maintainers]
+authors = ["Torchbase Project"]
+email = ["info@torchbase.example.com"]
+affiliations = ["Example Organization"]
+
+[description]
+short = "Multi-organism synthetic example torch"
+long = "A multi-scheme example torch demonstrating scheme-based organization (schemes/) with 2 organisms (salmonella and ecoli), each with 3 loci and 3 profiles for testing and documentation purposes"
+taxa = ["Synthetic"]
+
+[thresholds]
+min_identity = 0.9
+min_coverage = 3
+ambiguity_threshold = 0.85
+ksize = 31
+sketch_size = 10
+
+[manifest]
+profiles = "schemes/*"
+resources = "schemes/*/alleles"

@@ -2,6 +2,7 @@ from os import environ
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Tuple, Dict, Optional, Union
+import tempfile
 
 from torchbase.torchbase import Profile, Schema
 
@@ -290,3 +291,197 @@ class Torch:
             workflow=workflow,
             buildfile=buildfile,
         )
+
+    def concatenate_alleles(self) -> Path:
+        """Concatenate allele files from all schemes into single FASTA.
+
+        For multi-scheme torches: concatenates all allele files with
+        scheme-prefixed headers (e.g., ">ecoli_adk_1" for E. coli adk_1).
+
+        For single-scheme torches: concatenates allele files without
+        scheme prefix (backward compatible).
+
+        Returns:
+            Path to temporary concatenated FASTA file
+
+        Raises:
+            ValueError: If a scheme has no allele files
+            RuntimeError: If concatenation fails
+        """
+        # Create temporary file for concatenated alleles
+        temp_file = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.fasta', delete=False, dir=self.path
+        )
+        temp_path = Path(temp_file.name)
+
+        try:
+            if self.schemes:
+                # Multi-scheme case
+                self._concatenate_multi_scheme_alleles(temp_path)
+            else:
+                # Single-scheme case
+                self._concatenate_single_scheme_alleles(temp_path)
+        finally:
+            temp_file.close()
+
+        return temp_path
+
+    def _concatenate_multi_scheme_alleles(self, output_path: Path) -> None:
+        """Concatenate alleles from all schemes with scheme prefixes.
+
+        Args:
+            output_path: Path to write concatenated FASTA
+
+        Raises:
+            ValueError: If a scheme has no allele files
+        """
+        with open(output_path, 'w') as out_f:
+            # Process schemes in sorted order for consistency
+            for scheme_name in sorted(self.scheme_references.keys()):
+                allele_files = self.scheme_references[scheme_name]
+
+                if not allele_files:
+                    raise ValueError(
+                        f"Scheme '{scheme_name}' has no allele files"
+                    )
+
+                # Process each allele file in the scheme
+                for allele_file in sorted(allele_files):
+                    with open(allele_file, 'r') as in_f:
+                        for line in in_f:
+                            line = line.rstrip('\n')
+                            if line.startswith('>'):
+                                # Prefix header with scheme name
+                                # e.g., ">adk_1" becomes ">ecoli_adk_1"
+                                header = line[1:]  # Remove '>'
+                                prefixed_header = f">{scheme_name}_{header}"
+                                out_f.write(prefixed_header + '\n')
+                            else:
+                                # Write sequence as-is
+                                out_f.write(line + '\n')
+
+    def _concatenate_single_scheme_alleles(self, output_path: Path) -> None:
+        """Concatenate alleles from single-scheme torch (backward compatible).
+
+        Args:
+            output_path: Path to write concatenated FASTA
+        """
+        with open(output_path, 'w') as out_f:
+            for ref_file in sorted(self.references):
+                with open(ref_file, 'r') as in_f:
+                    out_f.write(in_f.read())
+
+    def transform_profiles(self) -> Path:
+        """Transform profile tables with scheme column and prefixed locus names.
+
+        For multi-scheme torches: adds 'scheme' column and prefixes locus names
+        (e.g., "adk" becomes "ecoli_adk").
+
+        For single-scheme torches: returns profiles as-is (backward compatible).
+
+        Returns:
+            Path to temporary transformed profile TSV file
+
+        Raises:
+            RuntimeError: If transformation fails
+        """
+        # Create temporary file for transformed profiles
+        temp_file = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.tsv', delete=False, dir=self.path
+        )
+        temp_path = Path(temp_file.name)
+        temp_file.close()
+
+        try:
+            if self.schemes:
+                # Multi-scheme case
+                self._transform_multi_scheme_profiles(temp_path)
+            else:
+                # Single-scheme case
+                self._transform_single_scheme_profiles(temp_path)
+        except Exception:
+            # Clean up on error
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
+        return temp_path
+
+    def _transform_multi_scheme_profiles(self, output_path: Path) -> None:
+        """Transform profiles from all schemes with scheme column.
+
+        Args:
+            output_path: Path to write transformed TSV
+        """
+        # Collect all loci from all schemes
+        all_loci = {}  # scheme_name -> set of loci
+        for scheme_name, schema in sorted(self.schemes.items()):
+            if schema.profiles:
+                first_profile = schema.profiles[0]
+                # Get loci (all headers except 'ST')
+                loci = [h for h in first_profile.header if h != 'ST']
+                all_loci[scheme_name] = loci
+
+        # Build header: ST, scheme, then all prefixed loci
+        header = ['ST', 'scheme']
+        for scheme_name in sorted(all_loci.keys()):
+            for locus in all_loci[scheme_name]:
+                header.append(f"{scheme_name}_{locus}")
+
+        # Write header
+        with open(output_path, 'w') as out_f:
+            out_f.write('\t'.join(header) + '\n')
+
+            # Write profiles from each scheme
+            for scheme_name in sorted(self.schemes.keys()):
+                schema = self.schemes[scheme_name]
+                for profile in schema.profiles:
+                    row = [profile.profile, scheme_name]  # ST and scheme
+
+                    # Add allele values for all loci
+                    for other_scheme in sorted(all_loci.keys()):
+                        for locus in all_loci[other_scheme]:
+                            if other_scheme == scheme_name:
+                                # This scheme has this locus
+                                value = getattr(profile, locus, '')
+                            else:
+                                # Cross-scheme locus: leave empty
+                                value = ''
+                            row.append(value)
+
+                    out_f.write('\t'.join(row) + '\n')
+
+    def _transform_single_scheme_profiles(self, output_path: Path) -> None:
+        """Transform profiles from single-scheme torch (backward compatible).
+
+        Args:
+            output_path: Path to write transformed TSV
+        """
+        # For single-scheme, copy profiles as-is
+        # Profile object has attributes matching original table structure
+        if not self.profile or not self.profile.profiles:
+            return
+
+        first_profile = self.profile.profiles[0]
+        header = first_profile.header
+
+        with open(output_path, 'w') as out_f:
+            # Write header
+            out_f.write('\t'.join(header) + '\n')
+
+            # Write each profile
+            for profile in self.profile.profiles:
+                row = [str(getattr(profile, h, '')) for h in header]
+                out_f.write('\t'.join(row) + '\n')
+
+    def get_unified_files(self) -> Tuple[Path, Path]:
+        """Get both unified alleles and profiles files.
+
+        Convenience method that returns both concatenated/transformed files.
+
+        Returns:
+            Tuple of (alleles_path, profiles_path)
+        """
+        alleles = self.concatenate_alleles()
+        profiles = self.transform_profiles()
+        return alleles, profiles
