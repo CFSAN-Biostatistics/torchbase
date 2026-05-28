@@ -44,10 +44,11 @@ workflow fast_typing {
         input:
             allele_calls = call_alleles.results,
             profiles_table = profiles_table,
-            strategy = "fast"
+            strategy = "fast",
+            alignment_used = false
     }
 
     output {
-        File typing_result = lookup_profile.typing_result
+        File typing_result = lookup_profile.result
     }
 }
