@@ -230,7 +230,7 @@ class TestFastWorkflowImports:
             content = f.read()
 
         # Should not import alignment.wdl
-        assert "import" not in content or "alignment" not in content, \
+        assert 'import "tasks/alignment.wdl"' not in content, \
             "Fast workflow should not import alignment tasks"
 
 
@@ -309,9 +309,12 @@ class TestFastWorkflowPipeline:
         with open(fast_workflow_path) as f:
             content = f.read()
 
-        # Should not have minimap2 or alignment calls
-        assert "minimap" not in content.lower() and "align" not in content.lower(), \
-            "Fast workflow should not call alignment tasks"
+        # Should not have minimap2 or alignment task calls
+        # (but alignment_used parameter is allowed as metadata)
+        assert "minimap" not in content.lower(), \
+            "Fast workflow should not call minimap2"
+        assert "align_and_call" not in content and "alignment.wdl" not in content, \
+            "Fast workflow should not import or call alignment tasks"
 
     def test_wdl_pipeline_is_linear(self, fast_workflow_path):
         """WDL workflow has linear pipeline (no conditionals for alignment fallback)"""
