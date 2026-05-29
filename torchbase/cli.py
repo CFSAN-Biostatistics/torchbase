@@ -131,6 +131,29 @@ def _info(torch):
 # File handling helper
 # 
 
+class FileReaderWithPath:
+    """Wrapper for file readers that stores the original file path."""
+    def __init__(self, reader, original_path):
+        self._reader = reader
+        self._original_path = str(original_path)
+
+    def read(self, *args, **kwargs):
+        return self._reader.read(*args, **kwargs)
+
+    def close(self):
+        return self._reader.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return self._reader.__exit__(*args)
+
+    def __getattr__(self, name):
+        # Delegate all other attributes to the wrapped reader
+        return getattr(self._reader, name)
+
+
 class ReadsFile(click.Path):
     name = "reads or contigs file"
 
@@ -143,13 +166,19 @@ class ReadsFile(click.Path):
         compressor = zstd.ZstdCompressor()
 
         def compress_stream(file_obj):
-            return compressor.stream_reader(file_obj)
+            reader = compressor.stream_reader(file_obj)
+            # Wrap reader with path information
+            return FileReaderWithPath(reader, path)
+
+        def passthrough_with_path(file_obj):
+            # For already-compressed files, wrap with path
+            return FileReaderWithPath(file_obj, path)
 
         magic_sigs = (
             (0x1f8b08, gzip.open, compress_stream),
             (0x425a68, bz2.open, compress_stream),
             (0x504b0304, lambda p, m: zipfile.ZipFile(p, m), compress_stream),
-            (0x28b52ffd, open, lambda s: s) # zstd doesn't need to be converted
+            (0x28b52ffd, open, passthrough_with_path) # zstd doesn't need to be converted
         )
 
         for signature, method, converter in magic_sigs:
@@ -495,27 +524,16 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             # Get the input file to analyze
             input_file = contigs or reads or paired1 or interlaced or longreads
             if input_file:
-                # Try multiple ways to get the original file path
-                file_path = None
+                # Get the original file path from the reader object
+                file_path = getattr(input_file, '_original_path', None)
 
-                # Try direct attributes
-                if hasattr(input_file, 'name') and isinstance(input_file.name, str):
-                    file_path = input_file.name
-                elif hasattr(input_file, '_source') and hasattr(input_file._source, 'name'):
-                    file_path = input_file._source.name
-
-                # If still not found, try iterating through attributes
                 if not file_path:
-                    for attr_name in ['_raw_stream', '_raw_input', '_source_file', 'raw_stream', 'source_file']:
-                        if hasattr(input_file, attr_name):
-                            attr = getattr(input_file, attr_name)
-                            if hasattr(attr, 'name'):
-                                file_path = attr.name
-                                break
+                    # Fallback: try other attributes
+                    if hasattr(input_file, 'name') and isinstance(input_file.name, str):
+                        file_path = input_file.name
 
-                # If still not found, try extracting from file size heuristics or other methods
-                # But for now, analyze whatever we have
-                analysis_input = file_path or input_file
+                # Analyze sequences using the original path
+                analysis_input = file_path if file_path else input_file
                 analysis = _analyze_sequences(analysis_input)
                 selected_strategy = analysis['selected_strategy']
                 auto_decision_rationale = analysis['rationale']
