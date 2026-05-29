@@ -184,8 +184,12 @@ ATGACCCAACTGAAAGTGATGCCGCAACGTGTCGACCTGCAAATCCACGCAGTGCTGATGAAACCGATG
 
 @pytest.fixture
 def mlst_workflow_path():
-    """Path to the main MLST workflow WDL file."""
-    return TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch" / "main.wdl"
+    """Path to the main MLST workflow WDL file.
+
+    Using balanced_typing.wdl as the baseline workflow that should
+    support quality.json and suspect data filtering.
+    """
+    return TORCHBASE_ROOT / "workflows" / "builtin" / "balanced_typing.wdl"
 
 
 class TestWorkflowReadsQualityJson:
