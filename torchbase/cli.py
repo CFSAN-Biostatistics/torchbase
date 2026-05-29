@@ -204,9 +204,14 @@ def _strategy_callback(ctx, param, value):
 @ReadsParam("-pe2", "--paired2", "--pe2")
 @ReadsParam("-i", "--interlaced")
 @ReadsParam("-l", "--longreads")
+@click.option("--quality-json", type=click.Path(exists=True), default=None, help="Quality JSON file for suspect data filtering")
+@click.option("--include-suspect-alleles", "allele_filter", flag_value="include", default=True, help="Include suspect alleles (default)")
+@click.option("--exclude-suspect-alleles", "allele_filter", flag_value="exclude", help="Exclude suspect alleles")
+@click.option("--exclude-suspect-loci", is_flag=True, default=False, help="Exclude suspect loci")
+@click.option("--exclude-suspect-profiles", is_flag=True, default=False, help="Exclude suspect profiles")
 @click.argument('torch_args', nargs=-1, type=click.UNPROCESSED)
 @click.pass_context
-def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=None, strategy='balanced', contigs=None, reads=None, paired1=None, paired2=None, interlaced=None, longreads=None, torch_args=[]):
+def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=None, strategy='balanced', contigs=None, reads=None, paired1=None, paired2=None, interlaced=None, longreads=None, quality_json=None, allele_filter="include", exclude_suspect_loci=False, exclude_suspect_profiles=False, torch_args=[]):
     "Run the selected torch."
     from torchbase.torchfs import Torch
     from torchbase.registry import RegistryManager
@@ -306,6 +311,16 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             miniwdl_cmd.extend(['interlaced=' + str(interlaced)])
         if longreads:
             miniwdl_cmd.extend(['longreads=' + str(longreads)])
+
+        # Add quality.json and suspect data flags
+        if quality_json:
+            miniwdl_cmd.extend(['quality_json=' + str(quality_json)])
+        if allele_filter == "exclude":
+            miniwdl_cmd.append('exclude_suspect_alleles=true')
+        if exclude_suspect_loci:
+            miniwdl_cmd.append('exclude_suspect_loci=true')
+        if exclude_suspect_profiles:
+            miniwdl_cmd.append('exclude_suspect_profiles=true')
 
         # Execute workflow
         result = run(miniwdl_cmd)
