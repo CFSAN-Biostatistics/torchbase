@@ -118,4 +118,3 @@ PYTHON_SCRIPT
         memory: "1 GB"
     }
 }
-}
