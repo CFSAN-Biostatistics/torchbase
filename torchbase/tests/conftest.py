@@ -6,6 +6,7 @@ import tempfile
 import toml
 import csv
 from unittest import mock
+import os
 
 # Mock ipyfs if it's not available
 try:
@@ -15,6 +16,45 @@ except ImportError:
     ipyfs_mock.Cat = mock.MagicMock(return_value=mock.MagicMock())
     import sys
     sys.modules['ipyfs'] = ipyfs_mock
+
+
+@pytest.fixture(scope="session", autouse=True)
+def configure_miniwdl_local_backend():
+    """Configure miniwdl to use local backend instead of Docker for tests.
+
+    This allows workflow tests to run in environments without Docker.
+    """
+    # Create a temporary config file for miniwdl
+    config_dir = Path(tempfile.gettempdir()) / "miniwdl_test_config"
+    config_dir.mkdir(exist_ok=True)
+    config_file = config_dir / "miniwdl.toml"
+
+    config_content = """
+[task_runtime]
+docker = false
+
+[runtime]
+backends = ["local"]
+
+[exe]
+allow_docker_fallback = false
+"""
+
+    config_file.write_text(config_content)
+
+    # Set environment variable to use this config
+    os.environ["WDL_CFG_PATH"] = str(config_file)
+
+    yield
+
+    # Cleanup
+    if config_file.exists():
+        config_file.unlink()
+    if config_dir.exists():
+        try:
+            config_dir.rmdir()
+        except OSError:
+            pass
 
 
 @pytest.fixture

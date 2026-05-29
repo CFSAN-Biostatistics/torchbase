@@ -236,7 +236,11 @@ torchbase workflow inspect path/to/torch/
 
 Torches can include a `main.wdl` workflow for custom typing logic. If present, the torch's workflow is used instead of built-in strategies. Note: `--strategy` flag cannot be used with torch-embedded workflows.
 
-## Quality Analysis
+## Quality Control and Suspect Data Filtering
+
+Torchbase provides built-in quality analysis and filtering capabilities to handle suspect or low-quality alleles in typing databases.
+
+### K-mer Analysis
 
 Torchbase includes k-mer analysis for quality control:
 
@@ -246,6 +250,117 @@ from torchbase.quality.kmer_analysis import analyze_locus
 report = analyze_locus(fasta_path, k=21)
 print(f"Found {len(report.suspect_pairs)} suspect pairs")
 ```
+
+### Filtering Suspect Data
+
+When running typing workflows, you can provide a `quality.json` file to filter suspect alleles, loci, or profiles. This is useful for databases with known quality issues or to exclude problematic sequences.
+
+#### Using Quality Filtering
+
+```bash
+# Exclude suspect alleles only (default behavior)
+torchbase run pubmlst/ecoli --contigs sample.fasta \
+    --quality-json quality.json \
+    --exclude-suspect-alleles
+
+# Exclude all alleles from suspect loci
+torchbase run pubmlst/ecoli --contigs sample.fasta \
+    --quality-json quality.json \
+    --exclude-suspect-loci
+
+# Exclude all loci from suspect profiles (most aggressive)
+torchbase run pubmlst/ecoli --contigs sample.fasta \
+    --quality-json quality.json \
+    --exclude-suspect-profiles
+```
+
+**Filtering Levels (hierarchical):**
+1. `--exclude-suspect-alleles` - Excludes only specific flagged alleles
+2. `--exclude-suspect-loci` - Excludes all alleles from flagged loci (implies level 1)
+3. `--exclude-suspect-profiles` - Excludes all loci from flagged profiles (implies levels 1 & 2)
+
+Note: If no `--quality-json` is provided, exclusion flags are silently ignored and no filtering occurs.
+
+#### Quality.json Schema
+
+The `quality.json` file contains quality annotations for alleles, loci, and profiles:
+
+```json
+{
+  "loci": {
+    "locus_name": {
+      "suspect": false,
+      "threshold": 90.0,
+      "similarities": {
+        "allele_1-allele_2": 45.5,
+        "allele_1-allele_3": 98.5
+      },
+      "alleles": {
+        "1": {
+          "suspect": false,
+          "length": 450,
+          "gc_content": 52.3
+        },
+        "2": {
+          "suspect": true,
+          "reason": "low similarity to other alleles"
+        }
+      },
+      "statistics": {
+        "mean": 72.0,
+        "std_dev": 31.2,
+        "min": 45.5,
+        "max": 98.5,
+        "percentile_99": 97.0,
+        "threshold_type": "percentile"
+      }
+    }
+  },
+  "profiles": {
+    "ST1": {
+      "suspect": false,
+      "loci": ["locus1", "locus2", "locus3"]
+    },
+    "ST42": {
+      "suspect": true,
+      "loci": ["locus1", "locus2"],
+      "reason": "incomplete profile"
+    }
+  }
+}
+```
+
+**Key fields:**
+- `loci[].suspect`: Boolean flag marking entire locus as suspect
+- `loci[].similarities`: Pairwise allele similarity scores (pairs below threshold are suspect)
+- `loci[].threshold`: Similarity cutoff for suspect pairs (default: 90.0)
+- `loci[].alleles[].suspect`: Per-allele quality flags
+- `profiles[].suspect`: Boolean flag marking entire profile as suspect
+- `profiles[].loci`: List of loci in this profile
+
+Allele pairs in the `similarities` object with scores below the threshold are automatically marked as suspect. This enables detection of duplicate or highly similar alleles that may represent sequencing errors or database quality issues.
+
+#### Result Metadata
+
+When filtering is applied, the typing result includes exclusion metadata:
+
+```json
+{
+  "profile_id": "ST1",
+  "status": "known",
+  "confidence": 0.95,
+  "notes": {
+    "exclusions": {
+      "excluded_alleles": ["locus1_42", "locus2_7"],
+      "excluded_loci": ["locus3"],
+      "num_excluded_alleles": 2,
+      "num_excluded_loci": 1
+    }
+  }
+}
+```
+
+This allows you to track which alleles/loci were filtered during typing for provenance and quality control purposes.
 
 ## Development
 
