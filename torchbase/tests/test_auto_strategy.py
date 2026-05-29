@@ -164,24 +164,18 @@ class TestContigDetectionRoutesToFast:
             with patch('torchbase.cli.run') as mock_run:
                 mock_run.return_value.returncode = 0
 
-                with patch('torchbase.cli.Path') as mock_path:
-                    # Mock builtin workflow path resolution
-                    mock_workflow_path = MagicMock()
-                    mock_workflow_path.exists.return_value = True
-                    mock_path.return_value = mock_workflow_path
+                _ = runner.invoke(
+                    cli,
+                    [
+                        'run', '--strategy', 'auto',
+                        str(torch_without_workflow), '-c', str(contig_file)
+                    ]
+                )
 
-                    _ = runner.invoke(
-                        cli,
-                        [
-                            'run', '--strategy', 'auto',
-                            str(torch_without_workflow), '-c', str(contig_file)
-                        ]
-                    )
-
-                    # Check that fast_typing.wdl was selected
-                    if mock_run.called:
-                        call_args = str(mock_run.call_args)
-                        assert 'fast_typing' in call_args
+                # Check that fast_typing.wdl was selected
+                if mock_run.called:
+                    call_args = str(mock_run.call_args)
+                    assert 'fast_typing' in call_args, f"Expected fast_typing in call args but got: {call_args}"
 
     def test_high_n50_triggers_fast_strategy(
         self, torch_without_workflow, contig_file
