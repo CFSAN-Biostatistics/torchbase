@@ -1,124 +1,54 @@
 version 1.0
 
+import "tasks/minhash.wdl" as minhash_tasks
+import "tasks/profile_lookup.wdl" as profile_tasks
+
 workflow fast_typing {
     input {
         File query_sequences
-        File allele_fasta
+        File allele_database
+        File profiles_table
         Int ksize = 31
         Int sketch_size = 1000
     }
 
-    call sketch_sequences as sketch_queries {
+    call minhash_tasks.sketch_sequences as sketch_queries {
         input:
             sequences = query_sequences,
             ksize = ksize,
             scaled = sketch_size
     }
 
-    call sketch_sequences as sketch_alleles {
+    call minhash_tasks.sketch_sequences as sketch_alleles {
         input:
-            sequences = allele_fasta,
+            sequences = allele_database,
             ksize = ksize,
             scaled = sketch_size
     }
 
-    call compare_sketches {
+    call minhash_tasks.compare_sketches {
         input:
             query_sketch = sketch_queries.sketch,
             allele_sketch = sketch_alleles.sketch,
-            allele_fasta = allele_fasta
+            allele_fasta = allele_database
     }
 
-    call call_alleles {
+    call minhash_tasks.call_alleles {
         input:
             similarity_matrix = compare_sketches.similarity_csv,
             query_sequences = query_sequences,
-            allele_fasta = allele_fasta
+            allele_fasta = allele_database
+    }
+
+    call profile_tasks.lookup_profile {
+        input:
+            allele_calls = call_alleles.results,
+            profiles_table = profiles_table,
+            strategy = "fast",
+            alignment_used = false
     }
 
     output {
-        File results = call_alleles.results
-        String allele_profile = call_alleles.allele_profile
-    }
-}
-
-task sketch_sequences {
-    input {
-        File sequences
-        Int ksize = 31
-        Int scaled = 1000
-    }
-
-    command <<<
-        set -e
-        if [ ! -s ~{sequences} ] || ! grep -q "^>" ~{sequences}; then
-            touch sequences.sig
-            exit 0
-        fi
-        sourmash sketch dna -p k=~{ksize},scaled=~{scaled},abund --singleton -o sequences.sig ~{sequences}
-    >>>
-
-    output {
-        File sketch = "sequences.sig"
-    }
-
-    runtime {
-        docker: "quay.io/biocontainers/sourmash:4.8.11--hdfd78af_0"
-        cpu: 1
-        memory: "2 GB"
-    }
-}
-
-task compare_sketches {
-    input {
-        File query_sketch
-        File allele_sketch
-        File allele_fasta
-    }
-
-    command <<<
-        set -e
-        if [ ! -s ~{query_sketch} ]; then
-            echo "" > similarity.csv
-            exit 0
-        fi
-        if [ ! -s ~{allele_sketch} ]; then
-            echo "" > similarity.csv
-            exit 0
-        fi
-        sourmash compare ~{query_sketch} ~{allele_sketch} --csv similarity.csv
-    >>>
-
-    output {
-        File similarity_csv = "similarity.csv"
-    }
-
-    runtime {
-        docker: "quay.io/biocontainers/sourmash:4.8.11--hdfd78af_0"
-        cpu: 1
-        memory: "2 GB"
-    }
-}
-
-task call_alleles {
-    input {
-        File similarity_matrix
-        File query_sequences
-        File allele_fasta
-    }
-
-    command <<<
-        echo "Calling alleles"
-    >>>
-
-    output {
-        File results = "allele_calls.json"
-        String allele_profile = ""
-    }
-
-    runtime {
-        docker: "python:3.12-slim"
-        cpu: 1
-        memory: "2 GB"
+        File typing_result = lookup_profile.result
     }
 }

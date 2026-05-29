@@ -1,157 +1,63 @@
 version 1.0
 
+import "tasks/minhash.wdl" as minhash
+import "tasks/alignment.wdl" as alignment
+import "tasks/profile_lookup.wdl" as profile_lookup
+
 workflow sensitive_typing {
     input {
         File query_sequences
-        File allele_fasta
-        Int ksize = 31
-        Int sketch_size = 1000
-        Float min_similarity_threshold = 0.90
-        Float identity_threshold = 0.95
+        File allele_database
+        File profiles
+        String preset = "asm5"
+        Float confidence_threshold = 0.95
     }
 
-    call sketch_sequences as sketch_queries {
+    # Step 1: Sketch query sequences with MinHash (for guidance only)
+    call minhash.sketch_sequences as sketch_queries {
         input:
             sequences = query_sequences,
-            ksize = ksize,
-            scaled = sketch_size
+            ksize = 31,
+            scaled = 1000
     }
 
-    call sketch_sequences as sketch_alleles {
+    # Step 2: Sketch allele database with MinHash (for guidance only)
+    call minhash.sketch_sequences as sketch_alleles {
         input:
-            sequences = allele_fasta,
-            ksize = ksize,
-            scaled = sketch_size
+            sequences = allele_database,
+            ksize = 31,
+            scaled = 1000
     }
 
-    call compare_sketches {
+    # Step 3: Compare sketches (guidance only)
+    call minhash.compare_sketches {
         input:
             query_sketch = sketch_queries.sketch,
             allele_sketch = sketch_alleles.sketch,
-            allele_fasta = allele_fasta
+            allele_fasta = allele_database
     }
 
-    call refine_with_alignment {
+    # Step 4: ALWAYS run full alignment with strict parameters using minimap2
+    # In sensitive mode, alignment is not conditional - it always runs
+    # Uses minimap2 with asm5 or asm5+eqx preset for high accuracy
+    call alignment.align_and_call as alignment_call {
         input:
             query_sequences = query_sequences,
-            allele_fasta = allele_fasta,
-            min_similarity_threshold = min_similarity_threshold,
-            identity_threshold = identity_threshold
+            allele_fasta = allele_database,
+            input_type = "contigs",
+            identity_threshold = confidence_threshold
     }
 
-    call call_alleles {
+    # Step 5: Lookup profile from alignment-based allele calls
+    call profile_lookup.lookup_profile as profile_call {
         input:
-            similarity_matrix = compare_sketches.similarity_csv,
-            query_sequences = query_sequences,
-            allele_fasta = allele_fasta
+            allele_calls = alignment_call.alignment_results,
+            profiles_table = profiles,
+            strategy = "sensitive",
+            alignment_used = true
     }
 
     output {
-        File results = refine_with_alignment.refined_calls
-        String allele_profile = call_alleles.allele_profile
-    }
-}
-
-task sketch_sequences {
-    input {
-        File sequences
-        Int ksize = 31
-        Int scaled = 1000
-    }
-
-    command <<<
-        set -e
-        if [ ! -s ~{sequences} ] || ! grep -q "^>" ~{sequences}; then
-            touch sequences.sig
-            exit 0
-        fi
-        sourmash sketch dna -p k=~{ksize},scaled=~{scaled},abund --singleton -o sequences.sig ~{sequences}
-    >>>
-
-    output {
-        File sketch = "sequences.sig"
-    }
-
-    runtime {
-        docker: "quay.io/biocontainers/sourmash:4.8.11--hdfd78af_0"
-        cpu: 1
-        memory: "2 GB"
-    }
-}
-
-task compare_sketches {
-    input {
-        File query_sketch
-        File allele_sketch
-        File allele_fasta
-    }
-
-    command <<<
-        set -e
-        if [ ! -s ~{query_sketch} ]; then
-            echo "" > similarity.csv
-            exit 0
-        fi
-        if [ ! -s ~{allele_sketch} ]; then
-            echo "" > similarity.csv
-            exit 0
-        fi
-        sourmash compare ~{query_sketch} ~{allele_sketch} --csv similarity.csv
-    >>>
-
-    output {
-        File similarity_csv = "similarity.csv"
-    }
-
-    runtime {
-        docker: "quay.io/biocontainers/sourmash:4.8.11--hdfd78af_0"
-        cpu: 1
-        memory: "2 GB"
-    }
-}
-
-task refine_with_alignment {
-    input {
-        File query_sequences
-        File allele_fasta
-        Float min_similarity_threshold = 0.90
-        Float identity_threshold = 0.95
-    }
-
-    command <<<
-        echo "Refining with alignment"
-    >>>
-
-    output {
-        File refined_calls = "refined_calls.json"
-    }
-
-    runtime {
-        docker: "python:3.12-slim"
-        cpu: 1
-        memory: "2 GB"
-    }
-}
-
-task call_alleles {
-    input {
-        File similarity_matrix
-        File query_sequences
-        File allele_fasta
-    }
-
-    command <<<
-        echo "Calling alleles"
-    >>>
-
-    output {
-        File results = "allele_calls.json"
-        String allele_profile = ""
-    }
-
-    runtime {
-        docker: "python:3.12-slim"
-        cpu: 1
-        memory: "2 GB"
+        File typing_result = profile_call.result
     }
 }

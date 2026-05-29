@@ -8,9 +8,10 @@ from typing import Optional, Dict, Tuple
 class WDLParser:
     """Simple WDL parser for extracting task flow and structure."""
 
-    def __init__(self, wdl_content: str):
+    def __init__(self, wdl_content: str, wdl_dir=None):
         """Initialize parser with WDL content."""
         self.content = wdl_content
+        self.wdl_dir = wdl_dir
         self.tasks = {}
         self.workflow_name = None
         self.workflow_inputs = {}
@@ -59,9 +60,13 @@ class WDLParser:
         if open_braces != close_braces:
             raise ValueError(f"WDL syntax error: mismatched braces ({open_braces} open, {close_braces} close)")
 
-        # Note: We don't validate import paths here since they're relative to the WDL file location
-        # and may not be resolvable from the current working directory. The WDL engine will
-        # handle import resolution during actual execution.
+        # Validate import paths if we have a base directory
+        if self.wdl_dir:
+            import_matches = re.findall(r'import\s+"([^"]+)"', self.content)
+            for import_path in import_matches:
+                full_path = self.wdl_dir / import_path
+                if not full_path.exists():
+                    raise ValueError(f"Import error: cannot resolve '{import_path}' (expected at {full_path})")
 
         # Check for clearly malformed syntax patterns
         if re.search(r'\{\{\{', self.content) or re.search(r'\}\}\}', self.content):
@@ -371,7 +376,7 @@ def inspect_workflow(workflow_path: str, verbose: bool = False) -> str:
 
     # Parse WDL
     try:
-        parser = WDLParser(wdl_content)
+        parser = WDLParser(wdl_content, wdl_dir=wdl_path.parent)
     except ValueError as e:
         raise ValueError(f"Failed to parse WDL: {e}")
 
