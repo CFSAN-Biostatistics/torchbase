@@ -593,6 +593,7 @@ class TestWorkflowResultsNoteExclusions:
 class TestWorkflowWorksWithoutQualityJson:
     """Test workflow works when quality.json absent (no filtering)."""
 
+    @pytest.mark.miniwdl
     def test_workflow_runs_without_quality_json(
         self, mlst_workflow_path, query_contigs, allele_database_with_suspects,
         profile_table
@@ -632,6 +633,7 @@ class TestWorkflowWorksWithoutQualityJson:
         # Tested via integration test
         pass
 
+    @pytest.mark.miniwdl
     def test_exclude_flags_without_quality_json_are_ignored(
         self, mlst_workflow_path, query_contigs, allele_database_with_suspects,
         profile_table
