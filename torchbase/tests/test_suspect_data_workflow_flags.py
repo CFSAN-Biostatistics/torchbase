@@ -603,9 +603,9 @@ class TestWorkflowWorksWithoutQualityJson:
 
             # No quality.json provided
             input_json = {
-                "mlst_typing.contigs": str(query_contigs),
-                "mlst_typing.allele_database": str(allele_database_with_suspects),
-                "mlst_typing.profiles": str(profile_table)
+                "balanced_typing.query_sequences": str(query_contigs),
+                "balanced_typing.allele_fasta": str(allele_database_with_suspects),
+                "balanced_typing.profiles_table": str(profile_table)
             }
 
             input_json_path = tmpdir_path / "inputs.json"
@@ -642,10 +642,10 @@ class TestWorkflowWorksWithoutQualityJson:
 
             # Exclude flags but no quality.json - should ignore and not error
             input_json = {
-                "mlst_typing.contigs": str(query_contigs),
-                "mlst_typing.allele_database": str(allele_database_with_suspects),
-                "mlst_typing.profiles": str(profile_table),
-                "mlst_typing.exclude_suspect_alleles": True
+                "balanced_typing.query_sequences": str(query_contigs),
+                "balanced_typing.allele_fasta": str(allele_database_with_suspects),
+                "balanced_typing.profiles_table": str(profile_table),
+                "balanced_typing.exclude_suspect_alleles": True
             }
 
             input_json_path = tmpdir_path / "inputs.json"
