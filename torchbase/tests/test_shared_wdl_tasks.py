@@ -387,18 +387,18 @@ import "{alignment_wdl}" as alignment
 
 workflow test_import {{
     input {{
-        File query
-        File reference
+        File query_sequences
+        File allele_fasta
     }}
 
     call alignment.{task_name} {{
         input:
-            query = query,
-            reference = reference
+            query_sequences = query_sequences,
+            allele_fasta = allele_fasta
     }}
 
     output {{
-        File alignment_output = {task_name}.alignment
+        File alignment_output = {task_name}.alignment_results
     }}
 }}
 """
