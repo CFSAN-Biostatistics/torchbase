@@ -72,11 +72,13 @@ workflow balanced_typing {
 
     # Step 4: Conditional alignment fallback
     # Uses asm5 preset for contigs, sr preset for reads
+    String alignment_preset = if input_type == "reads" then "sr" else "asm5"
+
     call alignment.align_and_call as alignment_fallback {
         input:
             query_sequences = query_sequences,
             allele_fasta = working_allele_fasta,
-            input_type = input_type,
+            preset = alignment_preset,
             identity_threshold = 0.90
     }
 

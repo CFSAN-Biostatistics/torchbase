@@ -132,11 +132,19 @@ result = {
 with open('profile_result.json', 'w') as f:
     json.dump(result, f, indent=2)
 
+# Write individual outputs for easier access
+with open('status.txt', 'w') as f:
+    f.write(status)
+with open('profile_id.txt', 'w') as f:
+    f.write(profile_id if profile_id else "unknown")
+
 PYTHON_SCRIPT
     >>>
 
     output {
         File result = "profile_result.json"
+        String status = read_string("status.txt")
+        String profile_id = read_string("profile_id.txt")
     }
 
     runtime {

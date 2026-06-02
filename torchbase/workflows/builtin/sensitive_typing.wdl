@@ -56,12 +56,12 @@ workflow sensitive_typing {
 
     # Step 4: ALWAYS run full alignment with strict parameters using minimap2
     # In sensitive mode, alignment is not conditional - it always runs
-    # Uses minimap2 with asm5 or asm5+eqx preset for high accuracy
+    # Uses minimap2 with asm5+eqx preset for high accuracy
     call alignment.align_and_call as alignment_call {
         input:
             query_sequences = query_sequences,
             allele_fasta = working_allele_fasta,
-            input_type = "contigs",
+            preset = "asm5+eqx",
             identity_threshold = confidence_threshold
     }
 
