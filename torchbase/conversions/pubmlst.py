@@ -84,13 +84,14 @@ def convert_scheme(
     # Extract allele sequences and write FASTA files
     allele_counts = {}
     for locus in scheme_data.loci:
-        # For now, we'll create stub FASTA files
-        # In a real implementation, these would be fetched from the API
         fasta_path = alleles_dir / f"{locus.locus_id}.fasta"
         allele_counts[locus.locus_id] = locus.alleles_count
 
-        # Create minimal FASTA content (stub for now)
-        _write_stub_fasta(fasta_path, locus.locus_id)
+        # Fetch real allele sequences from BIGSdb
+        alleles = client.fetch_alleles(database_name, locus.locus_id)
+
+        # Write FASTA file with real sequences
+        _write_fasta(fasta_path, alleles)
 
     # Write profiles.tsv from scheme data
     profiles_path = organism_dir / "profiles.tsv"
@@ -166,19 +167,20 @@ def _sanitize_name(name: str) -> str:
     return name.replace(" ", "_").replace("/", "_").lower()
 
 
-def _write_stub_fasta(fasta_path: Path, locus_id: str) -> None:
-    """Write a stub FASTA file for testing.
+def _write_fasta(fasta_path: Path, alleles: Dict[str, str]) -> None:
+    """Write allele sequences to a FASTA file.
 
     Args:
         fasta_path: Path to write FASTA file
-        locus_id: Locus identifier
+        alleles: Dictionary mapping allele IDs to sequences
     """
     with open(fasta_path, "w") as f:
-        # Write stub sequences
-        f.write(f">{locus_id}_1\n")
-        f.write("ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATG\n")
-        f.write(f">{locus_id}_2\n")
-        f.write("ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATG\n")
+        for allele_id, sequence in sorted(alleles.items()):
+            f.write(f">{allele_id}\n")
+
+            # Write sequence in 70-character lines (standard FASTA format)
+            for i in range(0, len(sequence), 70):
+                f.write(sequence[i:i+70] + "\n")
 
 
 def _write_profiles_tsv(profiles_path: Path, profiles: List[Dict[str, str]]) -> None:

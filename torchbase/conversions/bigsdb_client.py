@@ -385,3 +385,70 @@ class BIGSdbClient:
             loci=loci,
             profiles=profiles,
         )
+
+    def fetch_alleles(
+        self,
+        database: str,
+        locus_id: str,
+        added_after: Optional[datetime] = None,
+        updated_after: Optional[datetime] = None,
+    ) -> Dict[str, str]:
+        """Fetch allele sequences for a locus.
+
+        Retrieves all allele sequences for a given locus from BIGSdb.
+        Returns a dictionary mapping allele IDs to DNA sequences.
+
+        Args:
+            database: Database identifier (e.g., "pubmlst")
+            locus_id: Locus identifier (e.g., "aroC")
+            added_after: Filter for alleles added after this datetime
+            updated_after: Filter for alleles updated after this datetime
+
+        Returns:
+            Dictionary mapping allele IDs (e.g., "aroC_1") to sequences
+
+        Raises:
+            BIGSdbError: If locus cannot be fetched
+            BIGSdbNetworkError: For network errors
+            BIGSdbValidationError: For data validation errors
+        """
+        endpoint = f"db/{database}/loci/{locus_id}/alleles_fasta"
+
+        params = {}
+        if added_after:
+            params["added_after"] = added_after.isoformat()
+        if updated_after:
+            params["updated_after"] = updated_after.isoformat()
+
+        # Fetch FASTA text
+        fasta_text = self._make_request("GET", endpoint, params=params, expect_json=False)
+
+        # Parse FASTA into dictionary
+        alleles = {}
+        current_id = None
+        current_seq = []
+
+        for line in fasta_text.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith(">"):
+                # Save previous sequence if exists
+                if current_id is not None:
+                    alleles[current_id] = "".join(current_seq)
+
+                # Start new sequence
+                # Header format: >locus_allele or >allele_id
+                header = line[1:].split()[0]  # Take first token after >
+                current_id = header
+                current_seq = []
+            else:
+                # Sequence line
+                current_seq.append(line)
+
+        # Save last sequence
+        if current_id is not None:
+            alleles[current_id] = "".join(current_seq)
+
+        return alleles
