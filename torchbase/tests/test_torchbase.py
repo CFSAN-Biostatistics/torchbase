@@ -94,7 +94,22 @@ hash = "/ipfs/QmQPeNsJPyVWPFDVHb77w8G42Fvo15z4bG2X8D2GhfbSXc/readme"
 
 class TestTorchFS:
 
+    @pytest.mark.skipif(
+        torchbase.torchfs.ipyfs is None,
+        reason="ipyfs not installed"
+    )
     def test_ipyfs(self):
+        """Test IPFS integration (requires running IPFS daemon)."""
+        import requests
+
+        # Check if IPFS daemon is running
+        try:
+            response = requests.get("http://localhost:5001/api/v0/version", timeout=1)
+            if response.status_code != 200:
+                pytest.skip("IPFS daemon not running at localhost:5001")
+        except (requests.ConnectionError, requests.Timeout):
+            pytest.skip("IPFS daemon not running at localhost:5001")
+
         cat = torchbase.torchfs.ipyfs.Cat()
         assert cat(hash)['result'][0:len(head)] == head
 
