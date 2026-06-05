@@ -76,7 +76,7 @@ workflow balanced_typing {
         input:
             query_sequences = query_sequences,
             allele_fasta = working_allele_fasta,
-            input_type = input_type,
+            preset = if input_type == "reads" then "sr" else "asm5",
             identity_threshold = 0.90
     }
 

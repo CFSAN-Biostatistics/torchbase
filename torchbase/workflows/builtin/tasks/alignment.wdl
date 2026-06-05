@@ -4,6 +4,7 @@ task align_and_call {
     input {
         File query_sequences
         File allele_fasta
+        String preset = "asm5"  # Presets: asm20 (fast), asm5 (balanced), asm5+eqx (sensitive), sr (reads)
         String input_type = "contigs"
         Float identity_threshold = 0.90
     }
@@ -132,8 +133,7 @@ def run_minimap2_alignment(query_sequences, allele_fasta, preset):
 
 # Main
 query_seqs = parse_fasta("~{query_sequences}")
-input_type = "~{input_type}"
-preset = "sr" if input_type == "reads" else "asm5"
+preset = "~{preset}"
 
 alignment_results = run_minimap2_alignment(query_seqs, "~{allele_fasta}", preset)
 
