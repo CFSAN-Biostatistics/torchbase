@@ -590,12 +590,10 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             workflow_file = data_torch.workflow
         elif user_specified_strategy:
             # User explicitly specified --strategy, use built-in workflow
-            # Note: 'auto' maps to one of the other strategies after analysis
             strategy_to_workflow = {
                 'fast': 'fast_typing.wdl',
                 'balanced': 'balanced_typing.wdl',
                 'sensitive': 'sensitive_typing.wdl',
-                'auto': 'balanced_typing.wdl',  # fallback, should have been resolved above
             }
             workflow_filename = strategy_to_workflow.get(strategy)
             if not workflow_filename:
