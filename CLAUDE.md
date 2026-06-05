@@ -229,3 +229,17 @@ Defined in pyproject.toml:
 - `toml`: Metadata parsing
 - `click`: CLI framework
 - `cookiecutter`: Template system for torch generation
+
+## Agent skills
+
+### Issue tracker
+
+Issues tracked via GitHub Issues at `github.com/CFSAN-Biostatistics/torchbase`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Standard triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo with `CONTEXT.md` at root and `docs/adr/` for architectural decisions. See `docs/agents/domain.md`.
