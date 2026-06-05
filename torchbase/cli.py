@@ -618,7 +618,7 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             try:
                 config = RegistryConfig.load()
                 manager = RegistryManager(config)
-                default_workflow_path = manager.fetch_torch("torchbase/default-workflow")
+                default_workflow_path = manager.fetch_torch("workflows/default-workflow")
                 workflow_torch = Torch.load(default_workflow_path)
                 workflow_file = workflow_torch.workflow
             except Exception as e:
