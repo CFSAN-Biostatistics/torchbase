@@ -78,13 +78,13 @@ def parse_minhash_results(json_path):
     with open(json_path) as f:
         return json.load(f)
 
-def is_ambiguous(locus_result):
+def is_ambiguous(locus_result, min_similarity=0.92, max_second_best_diff=0.03):
     """Detect if a MinHash call is ambiguous and requires alignment fallback."""
     similarity = locus_result.get('similarity', 0.0)
     confidence = locus_result.get('confidence', False)
 
     # Low similarity triggers fallback
-    if similarity < 0.92:
+    if similarity < min_similarity:
         return True
 
     # Check if confidence is explicitly False
@@ -93,7 +93,7 @@ def is_ambiguous(locus_result):
         second_best = locus_result.get('second_best')
         if second_best:
             second_similarity = second_best.get('similarity', 0.0)
-            if abs(similarity - second_similarity) <= 0.03:
+            if abs(similarity - second_similarity) <= max_second_best_diff:
                 return True
 
     return False
@@ -192,7 +192,7 @@ for header, seq in allele_seqs.items():
 refined_results = {}
 
 for locus, locus_result in minhash_results.items():
-    if is_ambiguous(locus_result):
+    if is_ambiguous(locus_result, min_similarity=~{min_similarity_threshold}, max_second_best_diff=~{max_second_best_diff}):
         # Need to run alignment fallback for this locus
         # Find query sequences corresponding to this locus
         matching_queries = []
