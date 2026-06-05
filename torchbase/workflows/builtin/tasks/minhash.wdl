@@ -30,6 +30,11 @@ PYTHON_SCRIPT
     output {
         File sketch = "sequences.sig"
     }
+
+    runtime {
+        cpu: 1
+        memory: "1 GB"
+    }
 }
 
 task compare_sketches {
@@ -96,6 +101,11 @@ PYTHON_SCRIPT
 
     output {
         File similarity_csv = "similarity.csv"
+    }
+
+    runtime {
+        cpu: 1
+        memory: "1 GB"
     }
 }
 
@@ -235,6 +245,11 @@ CODE
         File results = "allele_calls.json"
         String allele_profile = read_string("allele_profile.txt")
     }
+
+    runtime {
+        cpu: 2
+        memory: "2 GB"
+    }
 }
 
 task call_alleles_minhash {
@@ -361,8 +376,7 @@ CODE
     }
 
     runtime {
-        docker: "python:3.12-slim"
-        cpu: 1
+        cpu: 2
         memory: "2 GB"
     }
 }
