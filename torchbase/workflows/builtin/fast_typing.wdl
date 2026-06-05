@@ -113,7 +113,6 @@ PYTHON_SCRIPT
     }
 
     runtime {
-        docker: "python:3.12-slim"
         cpu: 1
         memory: "1 GB"
     }
