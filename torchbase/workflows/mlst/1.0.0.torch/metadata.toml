@@ -1,0 +1,34 @@
+namespace = "torchbase"
+name = "mlst"
+version = "1.0.0"
+
+[version_meta]
+strategy = "semver"
+timestamp = 1609459200
+
+[typing]
+method = "mlst"
+description = "Complete MLST workflow orchestration with 7-stage pipeline"
+
+[maintainers]
+authors = ["Torchbase Project"]
+email = ["info@torchbase.example.com"]
+affiliations = ["Example Organization"]
+
+[description]
+short = "Complete MLST workflow orchestration"
+long = "Full-featured MLST pipeline orchestrating input validation, depth filtering, MinHash allele calling, scheme inference, profile lookup, alignment fallback, and final result assembly"
+taxa = ["Multi-organism"]
+
+[thresholds]
+min_identity = 0.90
+min_coverage = 3
+ambiguity_threshold = 0.85
+confidence_threshold = 0.85
+min_coverage_threshold = 0.5
+ksize = 31
+sketch_size = 10
+
+[manifest]
+profiles = "profiles.tsv"
+resources = []
