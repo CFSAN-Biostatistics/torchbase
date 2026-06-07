@@ -26,6 +26,33 @@ from torchbase.quality.kmer_analysis import analyze_locus
 
 TAXA = ["Salmonella"]
 
+DOWNLOAD_SOURCES = {
+    "repo": "https://github.com/CDCgov/SeqSero2",
+    "sequences": [
+        ("wzx_wzy.fasta",  "https://raw.githubusercontent.com/CDCgov/SeqSero2/master/SeqSero2_package/data/Otype_variable_region.fasta"),
+        ("fliC.fasta",     "https://raw.githubusercontent.com/CDCgov/SeqSero2/master/SeqSero2_package/data/H1_fliC_variant.fasta"),
+        ("fljB.fasta",     "https://raw.githubusercontent.com/CDCgov/SeqSero2/master/SeqSero2_package/data/H2_fljB_variant.fasta"),
+    ],
+    # Serotype profiles are compiled from NCBI / literature data and are not
+    # available as a simple download from the repo. Provide --profiles manually.
+}
+
+
+def download_sources(dest_dir: Path) -> dict:
+    """Download canonical SeqSero2 FASTA files to dest_dir.
+
+    Returns {'sequences': [list of open file handles]}.
+    Serotype profiles must be provided separately via --profiles.
+    """
+    from torchbase.conversions import fetch_file
+
+    dest_dir = Path(dest_dir)
+    sequence_files = []
+    for filename, url in DOWNLOAD_SOURCES["sequences"]:
+        path = fetch_file(url, dest_dir / filename)
+        sequence_files.append(open(path))
+    return {"sequences": sequence_files}
+
 
 def convert_local(
     sequence_files: List[IO],

@@ -25,6 +25,35 @@ from torchbase.quality.kmer_analysis import analyze_locus
 
 TAXA = ["Shigella"]
 
+_SHIGATYPER_RAW = "https://raw.githubusercontent.com/CFSAN-Biostatistics/ShigaTyper/master"
+
+DOWNLOAD_SOURCES = {
+    "repo": "https://github.com/CFSAN-Biostatistics/ShigaTyper",
+    "sequences": [
+        ("wzx.fasta", f"{_SHIGATYPER_RAW}/shigatyper/data/wzx.fasta"),
+        ("wzy.fasta", f"{_SHIGATYPER_RAW}/shigatyper/data/wzy.fasta"),
+        ("fliC.fasta", f"{_SHIGATYPER_RAW}/shigatyper/data/fliC.fasta"),
+    ],
+    # Serotype profiles are not available as a standalone TSV in the repo;
+    # provide --profiles manually.
+}
+
+
+def download_sources(dest_dir: Path) -> dict:
+    """Download canonical ShigaTyper FASTA files to dest_dir.
+
+    Returns {'sequences': [list of open file handles]}.
+    Serotype profiles must be provided separately via --profiles.
+    """
+    from torchbase.conversions import fetch_file
+
+    dest_dir = Path(dest_dir)
+    sequence_files = []
+    for filename, url in DOWNLOAD_SOURCES["sequences"]:
+        path = fetch_file(url, dest_dir / filename)
+        sequence_files.append(open(path))
+    return {"sequences": sequence_files}
+
 
 def convert_local(
     sequence_files: List[IO],

@@ -31,6 +31,43 @@ TAXA = ["Listeria monocytogenes"]
 # Canonical LisSero loci in expected order
 CANONICAL_LOCI = ["prs", "LMOSA", "LMOSB", "ORF2110", "ORF2819", "ldh", "lin0764", "lin1118"]
 
+_LISSERO_RAW = "https://raw.githubusercontent.com/MDU-PHL/LisSero/master"
+
+DOWNLOAD_SOURCES = {
+    "repo": "https://github.com/MDU-PHL/LisSero",
+    "sequences": [
+        (f"{locus}.fasta", f"{_LISSERO_RAW}/lissero/db/{locus}.fasta")
+        for locus in CANONICAL_LOCI
+    ],
+    "profiles": (
+        "Serogroups.tsv",
+        f"{_LISSERO_RAW}/lissero/db/Serogroups.tsv",
+    ),
+}
+
+
+def download_sources(dest_dir: Path) -> dict:
+    """Download canonical LisSero database files to dest_dir.
+
+    Returns {'sequences': [list of open file handles], 'profiles': open file handle}.
+    """
+    from torchbase.conversions import fetch_file
+
+    dest_dir = Path(dest_dir)
+
+    sequence_files = []
+    for filename, url in DOWNLOAD_SOURCES["sequences"]:
+        path = fetch_file(url, dest_dir / filename)
+        sequence_files.append(open(path))
+
+    prof_name, prof_url = DOWNLOAD_SOURCES["profiles"]
+    prof_path = fetch_file(prof_url, dest_dir / prof_name)
+
+    return {
+        "sequences": sequence_files,
+        "profiles": open(prof_path),
+    }
+
 
 def convert_local(
     sequence_files: List[IO],

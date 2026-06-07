@@ -35,6 +35,55 @@ from torchbase.quality.kmer_analysis import analyze_locus
 TAXA = ["Salmonella enterica"]
 MLST_LOCI = ["aroC", "dnaN", "hemD", "hisD", "purE", "sucA", "thrA"]
 
+_SS2S_RAW = "https://raw.githubusercontent.com/LSTUGA/SeqSero2S/master"
+
+DOWNLOAD_SOURCES = {
+    "repo": "https://github.com/LSTUGA/SeqSero2S",
+    "antigen_db": (
+        "H_and_O_and_specific_genes.fasta",
+        f"{_SS2S_RAW}/seqsero2s_db/H_and_O_and_specific_genes.fasta",
+    ),
+    "mlst_profiles": (
+        "salmonella_profile.txt",
+        f"{_SS2S_RAW}/seqsero2s_db/salmonella_profile.txt",
+    ),
+    "sequences": [
+        (f"{locus}.fasta", f"{_SS2S_RAW}/seqsero2s_db/kmer/{locus}.tfa")
+        for locus in MLST_LOCI
+    ],
+    # Serotype profiles (Serotype/O/H1/H2/ST) are not in the repo; provide
+    # --serotype-profiles manually.
+}
+
+
+def download_sources(dest_dir: Path) -> dict:
+    """Download canonical SeqSero2S files to dest_dir.
+
+    Returns dict with keys matching convert_local kwargs:
+      antigen_db, mlst_profiles, sequences (list of open file handles).
+    Serotype profiles must be provided separately via --serotype-profiles.
+    """
+    from torchbase.conversions import fetch_file
+
+    dest_dir = Path(dest_dir)
+
+    adb_name, adb_url = DOWNLOAD_SOURCES["antigen_db"]
+    antigen_db_path = fetch_file(adb_url, dest_dir / adb_name)
+
+    mlst_name, mlst_url = DOWNLOAD_SOURCES["mlst_profiles"]
+    mlst_profiles_path = fetch_file(mlst_url, dest_dir / mlst_name)
+
+    sequence_files = []
+    for filename, url in DOWNLOAD_SOURCES["sequences"]:
+        path = fetch_file(url, dest_dir / filename)
+        sequence_files.append(open(path))
+
+    return {
+        "antigen_db": open(antigen_db_path),
+        "mlst_profiles": open(mlst_profiles_path),
+        "sequences": sequence_files,
+    }
+
 
 def convert_local(
     sequence_files: List[IO],

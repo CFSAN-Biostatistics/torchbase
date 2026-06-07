@@ -33,6 +33,43 @@ from torchbase.quality.kmer_analysis import analyze_locus
 
 TAXA = ["Escherichia coli", "Shigella"]
 
+_ECTYPER_RAW = "https://raw.githubusercontent.com/phac-nml/ectyper/master"
+
+DOWNLOAD_SOURCES = {
+    "repo": "https://github.com/phac-nml/ectyper",
+    "db_fasta": (
+        "ECTyperDB.fasta",
+        f"{_ECTYPER_RAW}/ectyper/Data/ECTyperDB.fasta",
+    ),
+    "profiles": (
+        "allele_profiles.tsv",
+        f"{_ECTYPER_RAW}/ectyper/Data/allele_profiles.tsv",
+    ),
+}
+
+
+def download_sources(dest_dir: Path) -> dict:
+    """Download canonical ECTyper database files to dest_dir.
+
+    Returns {'db_fasta': open file handle, 'profiles': open file handle}.
+    Pass db_fasta to convert_local's db_fasta kwarg; it will be split
+    automatically into O/H antigen FASTA files.
+    """
+    from torchbase.conversions import fetch_file
+
+    dest_dir = Path(dest_dir)
+
+    db_name, db_url = DOWNLOAD_SOURCES["db_fasta"]
+    prof_name, prof_url = DOWNLOAD_SOURCES["profiles"]
+
+    db_path = fetch_file(db_url, dest_dir / db_name)
+    prof_path = fetch_file(prof_url, dest_dir / prof_name)
+
+    return {
+        "db_fasta": open(db_path),
+        "profiles": open(prof_path),
+    }
+
 
 def convert_local(
     sequence_files: List[IO],

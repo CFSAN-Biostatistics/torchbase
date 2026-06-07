@@ -872,14 +872,25 @@ def _pubcgmlst(scheme, sequences, output, namespace, name, kmer_size, overlap_th
 @convert.command("seqsero2")
 @click.argument("sequences", type=click.File(), nargs=-1)
 @click.option("--profiles", type=click.File(), default=None, help="Serotype definitions TSV (Serotype, O, H1, H2)")
+@click.option("--download", is_flag=True, default=False, help="Download FASTA files from CDCgov/SeqSero2")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="seqsero2", show_default=True, help="Torch name")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _seqsero2(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold):
+def _seqsero2(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from SeqSero2 Salmonella serotyping database files."
-    from torchbase.conversions.seqsero2 import convert_local
+    import tempfile
+    from torchbase.conversions.seqsero2 import convert_local, DOWNLOAD_SOURCES
+
+    if download:
+        if sequences:
+            raise click.UsageError("Cannot use --download with explicit SEQUENCES arguments.")
+        from torchbase.conversions.seqsero2 import download_sources
+        dest = Path(tempfile.mkdtemp(prefix="torchtools_seqsero2_"))
+        click.echo(f"Downloading from {DOWNLOAD_SOURCES['repo']} → {dest}")
+        sources = download_sources(dest)
+        sequences = sources["sequences"]
 
     try:
         torch_path = convert_local(
@@ -905,15 +916,31 @@ def _seqsero2(sequences, profiles, output, name, kmer_size, overlap_threshold, d
               help="MLST allele-to-ST table (salmonella_profile.txt)")
 @click.option("--serotype-profiles", type=click.File(), default=None,
               help="Serotype definitions TSV (Serotype, O, H1, H2)")
+@click.option("--download", is_flag=True, default=False,
+              help="Download antigen DB, MLST locus FASTAs, and MLST profiles from LSTUGA/SeqSero2S")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="seqsero2s", show_default=True, help="Torch name")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
 def _seqsero2s(sequences, antigen_db, mlst_profiles, serotype_profiles,
-               output, name, kmer_size, overlap_threshold, duplicate_threshold):
+               output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from SeqSero2S (LSTUGA) Salmonella serotyping + MLST database files."
-    from torchbase.conversions.seqsero2s import convert_local
+    import tempfile
+    from torchbase.conversions.seqsero2s import convert_local, DOWNLOAD_SOURCES
+
+    if download:
+        if sequences or antigen_db or mlst_profiles:
+            raise click.UsageError(
+                "Cannot use --download with explicit MLST_FASTAS, --antigen-db, or --mlst-profiles."
+            )
+        from torchbase.conversions.seqsero2s import download_sources
+        dest = Path(tempfile.mkdtemp(prefix="torchtools_seqsero2s_"))
+        click.echo(f"Downloading from {DOWNLOAD_SOURCES['repo']} → {dest}")
+        sources = download_sources(dest)
+        sequences = sources["sequences"]
+        antigen_db = sources["antigen_db"]
+        mlst_profiles = sources["mlst_profiles"]
 
     try:
         torch_path = convert_local(
@@ -937,17 +964,31 @@ def _seqsero2s(sequences, antigen_db, mlst_profiles, serotype_profiles,
 @click.option("--profiles", type=click.File(), default=None, help="Serotype definitions TSV (Serotype, O, H)")
 @click.option("--db", "db_fasta", type=click.File(), default=None,
               help="Combined ECTyper database FASTA (split automatically into O/H files)")
+@click.option("--download", is_flag=True, default=False,
+              help="Download ECTyperDB.fasta and allele profiles from phac-nml/ectyper")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="ectyper", show_default=True, help="Torch name")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _ectyper(sequences, profiles, db_fasta, output, name, kmer_size, overlap_threshold, duplicate_threshold):
+def _ectyper(sequences, profiles, db_fasta, output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from ECTyper E. coli / Shigella serotyping database files."
-    from torchbase.conversions.ectyper import convert_local
+    import tempfile
+    from torchbase.conversions.ectyper import convert_local, DOWNLOAD_SOURCES
 
-    if not sequences and db_fasta is None:
-        raise click.UsageError("Provide SEQUENCES files or --db for a combined FASTA.")
+    if download:
+        if sequences or db_fasta:
+            raise click.UsageError("Cannot use --download with explicit SEQUENCES or --db arguments.")
+        from torchbase.conversions.ectyper import download_sources
+        dest = Path(tempfile.mkdtemp(prefix="torchtools_ectyper_"))
+        click.echo(f"Downloading from {DOWNLOAD_SOURCES['repo']} → {dest}")
+        sources = download_sources(dest)
+        db_fasta = sources["db_fasta"]
+        if profiles is None:
+            profiles = sources["profiles"]
+    elif not sequences and db_fasta is None:
+        raise click.UsageError("Provide SEQUENCES files, --db, or --download.")
+
     try:
         torch_path = convert_local(
             sequence_files=list(sequences),
@@ -968,14 +1009,28 @@ def _ectyper(sequences, profiles, db_fasta, output, name, kmer_size, overlap_thr
 @click.argument("sequences", type=click.File(), nargs=-1)
 @click.option("--profiles", type=click.File(), default=None,
               help="Serogroup definitions TSV (Serogroup, prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh, lin0764, lin1118)")
+@click.option("--download", is_flag=True, default=False,
+              help="Download locus FASTAs and serogroup profiles from MDU-PHL/LisSero")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="lissero", show_default=True, help="Torch name")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _lissero(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold):
+def _lissero(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from LisSero Listeria monocytogenes serogroup database files."
-    from torchbase.conversions.lissero import convert_local
+    import tempfile
+    from torchbase.conversions.lissero import convert_local, DOWNLOAD_SOURCES
+
+    if download:
+        if sequences:
+            raise click.UsageError("Cannot use --download with explicit SEQUENCES arguments.")
+        from torchbase.conversions.lissero import download_sources
+        dest = Path(tempfile.mkdtemp(prefix="torchtools_lissero_"))
+        click.echo(f"Downloading from {DOWNLOAD_SOURCES['repo']} → {dest}")
+        sources = download_sources(dest)
+        sequences = sources["sequences"]
+        if profiles is None:
+            profiles = sources["profiles"]
 
     try:
         torch_path = convert_local(
@@ -1002,14 +1057,26 @@ def _chewie_ns():
 @convert.command("shigatyper")
 @click.argument("sequences", type=click.File(), nargs=-1)
 @click.option("--profiles", type=click.File(), default=None, help="Serotype profiles TSV")
+@click.option("--download", is_flag=True, default=False,
+              help="Download FASTA files from CFSAN-Biostatistics/ShigaTyper")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="shigatyper", show_default=True, help="Torch name")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _shigatyper(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold):
+def _shigatyper(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from ShigaTyper's database."
-    from torchbase.conversions.shigatyper import convert_local
+    import tempfile
+    from torchbase.conversions.shigatyper import convert_local, DOWNLOAD_SOURCES
+
+    if download:
+        if sequences:
+            raise click.UsageError("Cannot use --download with explicit SEQUENCES arguments.")
+        from torchbase.conversions.shigatyper import download_sources
+        dest = Path(tempfile.mkdtemp(prefix="torchtools_shigatyper_"))
+        click.echo(f"Downloading from {DOWNLOAD_SOURCES['repo']} → {dest}")
+        sources = download_sources(dest)
+        sequences = sources["sequences"]
 
     try:
         torch_path = convert_local(
