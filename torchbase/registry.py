@@ -1,5 +1,6 @@
 """Registry torch resolution and CID fetching."""
 
+import warnings
 from pathlib import Path
 from typing import Optional, Dict
 import toml
@@ -38,14 +39,20 @@ class RegistryManager:
             config = RegistryConfig()
         self.config = config
 
-    def resolve(self, torch_name: str, version: Optional[str] = None) -> str:
+    def resolve(
+        self,
+        torch_name: str,
+        version: Optional[str] = None,
+        require_signature: bool = False,
+    ) -> str:
         """Resolve torch reference to CID.
 
         Resolves "namespace/name" to a CID by querying registries in order:
         1. Check if version is pinned (pins take precedence)
         2. Try default registry
         3. Try additional registries in order
-        4. Return CID for resolved version or raise error
+        4. Verify CID signature (warn if missing, raise if invalid)
+        5. Return CID for resolved version or raise error
 
         Args:
             torch_name: Torch reference as "namespace/name"
@@ -53,12 +60,13 @@ class RegistryManager:
                    - None: resolve to latest
                    - "X.Y.Z": resolve to explicit version
                    Overridden by pins if present
+            require_signature: If True, missing signatures are treated as errors
 
         Returns:
             CID as string
 
         Raises:
-            ValueError: If torch not found or version not found
+            ValueError: If torch not found, version not found, or signature invalid
         """
         if "/" not in torch_name:
             raise ValueError(f"Torch name must include namespace: {torch_name}")
@@ -81,31 +89,91 @@ class RegistryManager:
 
             torch_versions = manifest[torch_name]
 
-            # Determine which version to use
+            # Determine which version and CID to use
             if version is None:
-                # Use latest if available
                 if "latest" in torch_versions:
-                    return torch_versions["latest"]
-                # Otherwise use first available version
-                if torch_versions:
-                    return list(torch_versions.values())[0]
-
+                    cid = torch_versions["latest"]
+                    resolved_version = next(
+                        (v for v, c in torch_versions.items()
+                         if v not in ("latest", "signatures", "workflow")
+                         and not isinstance(c, dict) and c == cid),
+                        None,
+                    )
+                elif torch_versions:
+                    cid = next(
+                        c for k, c in torch_versions.items()
+                        if k not in ("signatures", "workflow")
+                        and not isinstance(c, dict)
+                    )
+                    resolved_version = next(
+                        k for k, c in torch_versions.items()
+                        if k not in ("signatures", "workflow")
+                        and not isinstance(c, dict)
+                    )
+                else:
+                    continue
             else:
-                # Use explicit version
                 if version not in torch_versions:
                     raise ValueError(
                         f"Version {version} not found for {torch_name}"
                     )
-                return torch_versions[version]
+                cid = torch_versions[version]
+                resolved_version = version
+
+            self._verify_cid_signature(
+                torch_name, resolved_version, cid, torch_versions, require_signature
+            )
+            return cid
 
         # Not found in any registry
         raise ValueError(f"Torch {torch_name} not found in any registry")
+
+    def _verify_cid_signature(
+        self,
+        torch_name: str,
+        version: Optional[str],
+        cid: str,
+        torch_versions: Dict,
+        require_signature: bool,
+    ) -> None:
+        """Check manifest CID signature and warn or raise as appropriate."""
+        from torchbase.signing import verify_cid, resolve_public_key
+
+        namespace = torch_name.split("/")[0]
+        signatures = torch_versions.get("signatures", {})
+
+        if not isinstance(signatures, dict) or version not in signatures:
+            msg = f"No CID signature found for {torch_name} {version}"
+            if require_signature:
+                raise ValueError(msg)
+            warnings.warn(msg, stacklevel=3)
+            return
+
+        sig_b64 = signatures[version]
+        result = resolve_public_key(namespace, self.config)
+        if result is None:
+            msg = (
+                f"No public key found for namespace '{namespace}'; "
+                f"cannot verify {torch_name} {version}"
+            )
+            if require_signature:
+                raise ValueError(msg)
+            warnings.warn(msg, stacklevel=3)
+            return
+
+        pub_key_b64, algorithm = result
+        valid = verify_cid(cid, namespace, version or "", sig_b64, pub_key_b64, algorithm)
+        if not valid:
+            raise ValueError(
+                f"CID signature verification failed for {torch_name} {version}"
+            )
 
     def fetch_torch(
         self,
         torch_name: str,
         version: Optional[str] = None,
-        pin: bool = False
+        pin: bool = False,
+        require_signature: bool = False,
     ) -> Path:
         """Fetch torch and return local path.
 
@@ -116,6 +184,7 @@ class RegistryManager:
             torch_name: Torch reference as "namespace/name"
             version: Version constraint (None for latest)
             pin: Unused in mock implementation (for API compatibility)
+            require_signature: If True, missing signatures are treated as errors
 
         Returns:
             Path to torch (mocked local path for now)
@@ -123,7 +192,7 @@ class RegistryManager:
         Raises:
             ValueError: If torch not found or resolution fails
         """
-        cid = self.resolve(torch_name, version=version)
+        cid = self.resolve(torch_name, version=version, require_signature=require_signature)
         return self._cid_to_local_path(cid)
 
     def _fetch_manifest(self, registry_url: str) -> Dict:

@@ -114,6 +114,9 @@ class Torch:
         default_factory=dict
     )
 
+    # Signing
+    signature: Optional[Dict] = None
+
     @staticmethod
     def load(new_path):
         """Load torch from disk with single and multi-scheme support.
@@ -244,10 +247,16 @@ class Torch:
                 f"{sorted(discovered_schemes)}"
             )
 
+        signature = None
+        sig_path = path / "signature.toml"
+        if sig_path.exists():
+            signature = toml.load(sig_path)
+
         return Torch(
             path=path,
             schemes=schemes,
             scheme_references=scheme_references,
+            signature=signature,
         )
 
     @staticmethod
@@ -308,12 +317,18 @@ class Torch:
         if "buildfile" in manifest:
             buildfile = path / manifest["buildfile"]
 
+        signature = None
+        sig_path = path / "signature.toml"
+        if sig_path.exists():
+            signature = toml.load(sig_path)
+
         return Torch(
             path=path,
             profile=profile,
             references=references,
             workflow=workflow,
             buildfile=buildfile,
+            signature=signature,
         )
 
     def concatenate_alleles(self) -> Path:

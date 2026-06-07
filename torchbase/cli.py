@@ -10,6 +10,7 @@ from tabulate import tabulate
 from subprocess import run
 import inspect
 
+import requests
 import zstandard as zstd
 import zipfile
 import gzip
@@ -1026,6 +1027,169 @@ def _shigatyper(sequences, profiles, output, name, kmer_size, overlap_threshold,
 
 
 
+
+
+def _yubikey_signer_options(func):
+    """Decorator that adds --yubikey/--slot/--pin options."""
+    func = click.option("--pin", default=None, help="YubiKey PIV PIN (prompted if omitted)")(func)
+    func = click.option("--slot", default="9c", type=click.Choice(["9a", "9c", "9d", "9e"]),
+                        show_default=True, help="YubiKey PIV slot")(func)
+    func = click.option("--yubikey", is_flag=True, default=False,
+                        help="Use YubiKey for signing/key storage")(func)
+    return func
+
+
+def _build_signer(namespace, yubikey=False, slot="9c", pin=None):
+    """Return a signer instance for the given backend."""
+    from torchbase.signing import FileKeySigner, YubiKeySigner
+    if yubikey:
+        return YubiKeySigner(slot=slot, pin=pin)
+    key_path = Path.home() / ".torchbase" / "keys" / f"{namespace}.key"
+    if not key_path.exists():
+        raise click.ClickException(
+            f"No key found at {key_path}. Run: torchtools keygen --namespace {namespace}"
+        )
+    return FileKeySigner(key_path)
+
+
+@tools.command("keygen")
+@click.option("--namespace", required=True, help="Namespace to generate a key for")
+@click.option("--output", default=None, help="Key output directory (default: ~/.torchbase/keys/)")
+@_yubikey_signer_options
+def _keygen(namespace, output, yubikey, slot, pin):
+    """Generate a signing key for a namespace."""
+    from torchbase.signing import generate_software_keypair, setup_yubikey_slot
+
+    key_dir = Path(output) if output else Path.home() / ".torchbase" / "keys"
+
+    if yubikey:
+        pub_path = setup_yubikey_slot(slot, namespace, key_dir, pin=pin)
+        click.echo(f"YubiKey key generated in slot {slot}")
+        click.echo(f"Public key written to: {pub_path}")
+    else:
+        priv_path, pub_path = generate_software_keypair(namespace, key_dir)
+        click.echo(f"Private key: {priv_path}")
+        click.echo(f"Public key:  {pub_path}")
+
+    pub_text = pub_path.read_text().strip()
+    click.echo(f"\nPublic key (add to key registry):\n{namespace} = \"{pub_text}\"")
+
+
+@tools.command("pubkey")
+@click.argument("namespace", required=True)
+@click.option("--key-dir", default=None, help="Key directory (default: ~/.torchbase/keys/)")
+def _pubkey(namespace, key_dir):
+    """Print the public key for a namespace."""
+    key_dir = Path(key_dir) if key_dir else Path.home() / ".torchbase" / "keys"
+    pub_path = key_dir / f"{namespace}.pub"
+    if not pub_path.exists():
+        raise click.ClickException(f"No public key found at {pub_path}")
+    click.echo(pub_path.read_text().strip())
+
+
+@tools.command("sign")
+@torch
+@_yubikey_signer_options
+def _sign(torch, yubikey, slot, pin):
+    """Sign a torch, writing signature.toml."""
+    from torchbase.signing import sign_torch
+    from torchbase import torchfs
+
+    t = torchfs.Torch.load(torch)
+    meta_path = Path(torch) / "metadata.toml"
+    import toml as _toml
+    meta = _toml.load(meta_path)
+    namespace = meta["namespace"]
+
+    signer = _build_signer(namespace, yubikey=yubikey, slot=slot, pin=pin)
+    sig_path = sign_torch(Path(torch), signer)
+    click.echo(f"Signed: {sig_path}")
+
+
+@tools.command("publish")
+@torch
+@_yubikey_signer_options
+@click.pass_context
+def _publish(ctx, torch, yubikey, slot, pin):
+    """Sign, upload to IPFS, sign the CID, and print manifest snippet."""
+    import toml as _toml
+    from torchbase.signing import sign_torch, sign_cid
+    from torchbase.torchfs import _kubo_url, node, port
+
+    torch_path = Path(torch)
+    meta = _toml.load(torch_path / "metadata.toml")
+    namespace = meta["namespace"]
+    name = meta["name"]
+    version = str(meta["version"])
+
+    signer = _build_signer(namespace, yubikey=yubikey, slot=slot, pin=pin)
+
+    # Sign content
+    sig_path = sign_torch(torch_path, signer)
+    click.echo(f"Signed content: {sig_path}")
+
+    # Upload to IPFS
+    try:
+        resp = requests.post(
+            f"{_kubo_url(node, port)}/add",
+            params={"recursive": "true", "quieter": "true"},
+            files={"upload": ("", open(str(torch_path), "rb"))},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        cid = resp.json()["Hash"]
+    except Exception as e:
+        raise click.ClickException(f"IPFS upload failed: {e}")
+
+    # Sign CID
+    cid_sig = sign_cid(cid, namespace, version, signer)
+
+    torch_ref = f"{namespace}/{name}"
+    click.echo(f"\nCID: {cid}")
+    click.echo(f"\nManifest snippet:")
+    click.echo(f'["{torch_ref}"]')
+    click.echo(f'"{version}" = "{cid}"')
+    click.echo(f'latest = "{cid}"')
+    click.echo(f'["{torch_ref}".signatures]')
+    click.echo(f'"{version}" = "{cid_sig}"')
+
+
+@cli.command("verify")
+@torch
+@click.option("--public-key", "public_key_b64", default=None,
+              help="Override public key (base64url). Default: resolve from config/embedded.")
+@click.option("--require-signature", is_flag=True, default=False,
+              help="Fail if no signature is present")
+def _verify(torch, public_key_b64, require_signature):
+    """Verify the cryptographic signature of a torch."""
+    from torchbase.signing import verify_torch, resolve_public_key
+    from torchbase.config import RegistryConfig
+
+    torch_path = Path(torch)
+    sig_path = torch_path / "signature.toml"
+
+    if not sig_path.exists():
+        if require_signature:
+            raise click.ClickException("No signature.toml found and --require-signature set")
+        click.echo("Warning: no signature.toml found", err=True)
+        return
+
+    config = RegistryConfig.load()
+
+    # Resolve public key if not provided
+    if public_key_b64 is None:
+        import toml as _toml
+        meta = _toml.load(torch_path / "metadata.toml")
+        namespace = meta["namespace"]
+        result = resolve_public_key(namespace, config, torch_path)
+        if result is not None:
+            public_key_b64, _ = result
+
+    result = verify_torch(torch_path, public_key_b64=public_key_b64)
+    if result.valid:
+        click.echo(f"OK: {result.message}")
+    else:
+        raise click.ClickException(f"Invalid signature: {result.message}")
 
 
 if __name__ == '__main__':

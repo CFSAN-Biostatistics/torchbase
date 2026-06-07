@@ -13,6 +13,9 @@ class RegistryConfig:
     default_registry: Optional[str] = None
     additional_registries: List[str] = field(default_factory=list)
     pins: Dict[str, str] = field(default_factory=dict)
+    key_registries: List[str] = field(default_factory=list)
+    trusted_keys: Dict[str, str] = field(default_factory=dict)
+    key_cache_ttl_hours: int = 24
 
     @staticmethod
     def load(user_config_dir: Optional[Path] = None,
@@ -91,5 +94,13 @@ class RegistryConfig:
         # Merge pins section
         if "pins" in data:
             config.pins.update(data["pins"])
+
+        # Merge signing/key sections
+        if "key_registries" in data:
+            config.key_registries = data["key_registries"]
+        if "trusted_keys" in data:
+            config.trusted_keys.update(data["trusted_keys"])
+        if "key_cache_ttl_hours" in data:
+            config.key_cache_ttl_hours = int(data["key_cache_ttl_hours"])
 
         return config
