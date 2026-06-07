@@ -239,6 +239,111 @@ a successful version bump.
 
 ---
 
+## Cryptographic signing
+
+Torches you build and distribute can be cryptographically signed so consumers
+can verify they came from you. Signatures cover the full file content of the
+torch and, separately, the IPFS CID recorded in the manifest. Two key backends
+are supported: a software Ed25519 key file, or a YubiKey PIV slot (key never
+leaves hardware).
+
+### Key generation
+
+**Software key (default):**
+
+```
+torchtools keygen --namespace cdc
+```
+
+Writes `~/.torchbase/keys/cdc.key` (mode 0600) and `~/.torchbase/keys/cdc.pub`.
+The public key is printed at the end — add it to your key registry TOML.
+
+**YubiKey PIV:**
+
+```
+torchtools keygen --namespace cdc --yubikey [--slot 9c] [--pin <pin>]
+```
+
+Generates a key on the PIV slot (default `9c`) and exports the public key to
+`~/.torchbase/keys/cdc.pub`. The private key never leaves the device.
+
+### Signing a torch
+
+```
+torchtools sign ./torches/cdc/seqsero2/1.0.0.torch
+torchtools sign ./torches/cdc/seqsero2/1.0.0.torch --yubikey [--slot 9c] [--pin <pin>]
+```
+
+Writes `signature.toml` inside the torch directory. Signing is idempotent —
+re-running produces a new signature over the same content.
+
+### Publishing (sign + IPFS add + sign CID)
+
+```
+torchtools publish ./torches/cdc/seqsero2/1.0.0.torch
+torchtools publish ./torches/cdc/seqsero2/1.0.0.torch --yubikey
+```
+
+Chains three steps: signs the torch content, uploads to IPFS, then signs the
+resulting CID. Prints a manifest snippet ready to paste into your registry:
+
+```toml
+["cdc/seqsero2"]
+"1.0.0" = "QmABC..."
+latest   = "QmABC..."
+
+["cdc/seqsero2".signatures]
+"1.0.0" = "base64url-encoded-signature"
+```
+
+### Verifying a torch
+
+```
+torchbase verify ./torches/cdc/seqsero2/1.0.0.torch
+torchbase verify ./torches/cdc/seqsero2/1.0.0.torch --public-key <base64url-key>
+torchbase verify ./torches/cdc/seqsero2/1.0.0.torch --require-signature
+```
+
+Recomputes the content hash, checks it matches `signature.toml`, and verifies
+the Ed25519 (or P-256) signature. Key lookup order:
+
+1. `--public-key` flag (explicit override)
+2. Key registries listed in `~/.torchbase/config.toml`
+3. `trusted_keys` in config
+4. Public key embedded in `signature.toml`
+
+Without `--require-signature`, a missing or unknown-namespace signature prints
+a warning and exits 0. With `--require-signature`, missing signatures are
+treated as failures.
+
+### Key registry
+
+Publish a TOML file (via IPFS/IPNS or HTTP) mapping namespaces to public keys:
+
+```toml
+[keys]
+cdc      = "base64url-pubkey..."
+pubmlst  = "base64url-pubkey..."
+```
+
+Reference it in `~/.torchbase/config.toml`:
+
+```toml
+key_registries = ["https://example.com/torchbase-keys.toml"]
+# or
+key_registries = ["/ipns/k51q...yourname"]
+
+key_cache_ttl_hours = 24   # optional, default 24
+
+[trusted_keys]
+cdc = "base64url-pubkey..."  # inline fallback, no network needed
+```
+
+The registry is fetched once and cached at `~/.torchbase/key_cache.toml`;
+re-fetched after `key_cache_ttl_hours` hours.
+
+---
+
 ## Quality analysis
 
 Every converter runs k-mer quality analysis on the allele FASTA files it
