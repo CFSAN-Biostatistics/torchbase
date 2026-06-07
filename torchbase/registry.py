@@ -129,24 +129,55 @@ class RegistryManager:
     def _fetch_manifest(self, registry_url: str) -> Dict:
         """Fetch manifest from registry.
 
+        Supports two URL forms:
+        - /ipns/<name> or ipns://<name>  → resolved via Kubo API
+        - http(s)://...                  → fetched directly
+
         Args:
-            registry_url: URL of the registry
+            registry_url: Registry URL or IPNS path
 
         Returns:
             Dictionary with torch references and CIDs
 
         Raises:
+            ImportError: If requests not available
             Exception: If fetch or parsing fails
         """
         if requests is None:
             raise ImportError("requests library required for registry fetching")
 
-        response = requests.get(registry_url)
-        response.raise_for_status()
+        from torchbase.torchfs import _kubo_url, node, port
 
-        # Parse TOML manifest
-        manifest_data = toml.loads(response.text)
-        return manifest_data
+        # Detect IPNS reference and resolve via Kubo
+        ipns_name = None
+        if registry_url.startswith("/ipns/"):
+            ipns_name = registry_url[len("/ipns/"):]
+        elif registry_url.startswith("ipns://"):
+            ipns_name = registry_url[len("ipns://"):]
+
+        if ipns_name:
+            # Step 1: resolve IPNS name → CID
+            resolve_resp = requests.post(
+                f"{_kubo_url(node, port)}/name/resolve",
+                params={"arg": ipns_name},
+                timeout=30,
+            )
+            resolve_resp.raise_for_status()
+            cid = resolve_resp.json()["Path"].lstrip("/ipfs/")
+
+            # Step 2: fetch manifest TOML from CID
+            cat_resp = requests.post(
+                f"{_kubo_url(node, port)}/cat",
+                params={"arg": cid},
+                timeout=30,
+            )
+            cat_resp.raise_for_status()
+            return toml.loads(cat_resp.text)
+
+        # Plain HTTP registry
+        response = requests.get(registry_url, timeout=30)
+        response.raise_for_status()
+        return toml.loads(response.text)
 
     def _cid_to_local_path(self, cid: str) -> Path:
         """Map CID to local path.
@@ -165,9 +196,14 @@ class RegistryManager:
             Currently returns a mock path. Real IPFS integration would
             be added here.
         """
-        # Mock: return a predictable path based on CID
-        ipfs_cache_dir = Path("/tmp/ipfs")
-        return ipfs_cache_dir / cid
+        cache_path = Path.home() / ".torchbase" / "cache" / cid
+        if not cache_path.exists():
+            from torchbase.torchfs import download_torch
+            try:
+                download_torch(cid)
+            except Exception:
+                pass  # Return path even if download fails; caller checks exists()
+        return cache_path
 
     def pin_torch(
         self,

@@ -1,14 +1,22 @@
-"""ShigaTyper converter — local FASTA files to torch format.
+"""ECTyper converter — local database files to torch format.
 
-ShigaTyper identifies Shigella serotypes by typing wzx/wzy (O-antigen)
-and fliC (H-antigen) loci.
+ECTyper serotypes E. coli (and Shigella) by typing O-antigen and H-antigen loci.
+The ECTyper database FASTA uses headers prefixed with the antigen class:
+    >O1-1-wzm_1   (O-antigen gene)
+    >H2-1-fliC_1  (H-antigen gene)
 
-If a profiles TSV is provided it is used as-is; otherwise a stub header-only
-table is written so the torch is immediately loadable.
+The converter splits the combined database into O-antigen and H-antigen FASTA
+files when a single combined FASTA is provided, or accepts pre-split files.
+
+Expected serotype table (TSV) columns: Serotype, O, H
+Missing antigens should use "-" or "ND" per ECTyper convention.
 
 Usage:
-    torchtools convert shigatyper wzx.fasta wzy.fasta fliC.fasta
-    torchtools convert shigatyper --profiles serotypes.tsv wzx.fasta wzy.fasta fliC.fasta
+    # Combined ECTyper database FASTA
+    torchtools convert ectyper --profiles ectyper.tsv --db ECTyperDB.fasta
+
+    # Pre-split per-antigen FASTA files
+    torchtools convert ectyper --profiles ectyper.tsv O_antigen.fasta H_antigen.fasta
 """
 
 import csv
@@ -23,30 +31,34 @@ import toml
 from torchbase.quality.kmer_analysis import analyze_locus
 
 
-TAXA = ["Shigella"]
+TAXA = ["Escherichia coli", "Shigella"]
 
 
 def convert_local(
     sequence_files: List[IO],
     profiles_file: Optional[IO] = None,
+    db_fasta: Optional[IO] = None,
     output_path: str = ".",
-    namespace: str = "shigatyper",
-    name: str = "shigatyper",
+    namespace: str = "ectyper",
+    name: str = "ectyper",
     version: str = "1.0.0",
     kmer_size: int = 13,
     overlap_threshold: float = 0.90,
     duplicate_threshold: float = 0.95,
 ) -> str:
-    """Convert local ShigaTyper FASTA files to torch format.
+    """Convert local ECTyper database files to torch format.
 
     Args:
-        sequence_files: Open file handles for antigen gene FASTA files.
-        profiles_file: Optional open file handle for serotype profiles TSV.
-            Columns: Serotype, O, H (at minimum). If absent, a stub
-            header-only table is written so the torch is loadable.
+        sequence_files: Open file handles for per-antigen FASTA files (O, H).
+        profiles_file: Open file handle for serotype definitions TSV.
+            Columns: Serotype, O, H (at minimum).
+        db_fasta: Open file handle for a combined ECTyper DB FASTA. When
+            provided, sequences are split into O-antigen and H-antigen files
+            based on header prefixes (O* / H*). Takes precedence over
+            sequence_files if both are given.
         output_path: Directory in which to create the torch.
-        namespace: Torch namespace (default: "shigatyper").
-        name: Torch name (default: "shigatyper").
+        namespace: Torch namespace (default: "ectyper").
+        name: Torch name (default: "ectyper").
         version: Torch version string.
         kmer_size: K-mer size for quality analysis.
         overlap_threshold: Overlap similarity threshold.
@@ -62,12 +74,15 @@ def convert_local(
     resources_dir = torch_dir / "_resources"
     resources_dir.mkdir(exist_ok=True)
 
-    locus_names = []
-    for fasta_fh in sequence_files:
-        src = Path(fasta_fh.name)
-        dest = resources_dir / src.name
-        shutil.copy2(src, dest)
-        locus_names.append(src.stem)
+    if db_fasta is not None:
+        locus_names = _split_combined_fasta(db_fasta, resources_dir)
+    else:
+        locus_names = []
+        for fasta_fh in sequence_files:
+            src = Path(fasta_fh.name)
+            dest = resources_dir / src.name
+            shutil.copy2(src, dest)
+            locus_names.append(src.stem)
 
     profiles_dest = torch_dir / "profiles.tsv"
     if profiles_file is not None:
@@ -76,7 +91,7 @@ def convert_local(
         rows = list(csv.reader(profiles_file, delimiter="\t"))
         profile_count = max(0, len(rows) - 1)
     else:
-        _write_stub_profiles(profiles_dest, locus_names)
+        _write_stub_profiles(profiles_dest)
         profile_count = 0
 
     quality_results = _run_quality_analysis(
@@ -91,13 +106,13 @@ def convert_local(
         "version_info": {"strategy": "snapshot", "timestamp": now},
         "typing": {
             "method": "serotyping",
-            "scheme": "Shigella O:H antigen",
+            "scheme": "O:H antigen",
             "loci_count": len(locus_names),
             "profiles_count": profile_count,
         },
         "description": {
-            "short": "ShigaTyper Shigella serotyping torch",
-            "long": "Shigella serotyping based on wzx/wzy O-antigen and fliC H-antigen loci",
+            "short": "ECTyper E. coli / Shigella serotyping torch",
+            "long": "E. coli and Shigella serotyping based on O-antigen and H-antigen loci",
             "taxa": TAXA,
         },
         "data_quality": {
@@ -123,7 +138,52 @@ def convert_local(
     return str(torch_dir)
 
 
-def _write_stub_profiles(profiles_path: Path, locus_names: List[str]) -> None:
+def _split_combined_fasta(db_fasta_fh: IO, resources_dir: Path) -> List[str]:
+    """Split an ECTyper combined FASTA into O-antigen and H-antigen files.
+
+    Headers starting with 'O' go to O_antigen.fasta; those starting with 'H'
+    go to H_antigen.fasta. Unrecognised prefixes go to other_antigen.fasta.
+    """
+    buckets: dict = {"O": [], "H": [], "other": []}
+    current_bucket = None
+    current_lines: List[str] = []
+
+    def flush(bucket, lines):
+        if lines:
+            buckets[bucket].extend(lines)
+
+    for raw_line in db_fasta_fh:
+        line = raw_line.rstrip("\n")
+        if line.startswith(">"):
+            if current_bucket is not None:
+                flush(current_bucket, current_lines)
+            header = line[1:]
+            if header.upper().startswith("O"):
+                current_bucket = "O"
+            elif header.upper().startswith("H"):
+                current_bucket = "H"
+            else:
+                current_bucket = "other"
+            current_lines = [line]
+        else:
+            if current_bucket is not None:
+                current_lines.append(line)
+
+    if current_bucket is not None:
+        flush(current_bucket, current_lines)
+
+    locus_names = []
+    bucket_map = {"O": "O_antigen", "H": "H_antigen", "other": "other_antigen"}
+    for key, fname in bucket_map.items():
+        if buckets[key]:
+            dest = resources_dir / f"{fname}.fasta"
+            dest.write_text("\n".join(buckets[key]) + "\n")
+            locus_names.append(fname)
+
+    return locus_names
+
+
+def _write_stub_profiles(profiles_path: Path) -> None:
     with open(profiles_path, "w", newline="") as f:
         csv.writer(f, delimiter="\t").writerow(["Serotype", "O", "H"])
 

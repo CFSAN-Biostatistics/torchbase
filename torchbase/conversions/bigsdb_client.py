@@ -338,6 +338,22 @@ class BIGSdbClient:
             last_updated=last_updated,
         )
 
+    def _fetch_alleles_fasta(self, database: str, locus_id: str) -> str:
+        """Fetch allele sequences for a locus as FASTA text.
+
+        Args:
+            database: Database identifier (e.g., "pubmlst")
+            locus_id: Locus identifier string
+
+        Returns:
+            Raw FASTA text with all allele sequences
+
+        Raises:
+            BIGSdbError: If alleles cannot be fetched
+        """
+        endpoint = f"db/{database}/loci/{locus_id}/alleles_fasta"
+        return self._make_request("GET", endpoint, expect_json=False)
+
     def fetch_scheme(
         self,
         database: str,

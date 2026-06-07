@@ -181,18 +181,18 @@ class TestJSONOutput:
         assert "loci" in data
 
     def test_json_has_similarity_stats(self, empty_suspects_report):
-        """Test that JSON output includes similarity_stats."""
+        """Test that JSON output includes similarity_stats per locus."""
         reports = {"locus_1": empty_suspects_report}
         result = generate_report(reports, format="json")
         data = json.loads(result)
-        assert "similarity_stats" in data
+        assert "similarity_stats" in data["loci"]["locus_1"]
 
     def test_json_has_suspect_pairs(self, empty_suspects_report):
-        """Test that JSON output includes suspect_pairs."""
+        """Test that JSON output includes suspect_pairs per locus."""
         reports = {"locus_1": empty_suspects_report}
         result = generate_report(reports, format="json")
         data = json.loads(result)
-        assert "suspect_pairs" in data
+        assert "suspect_pairs" in data["loci"]["locus_1"]
 
     def test_json_has_summary(self, empty_suspects_report):
         """Test that JSON output includes summary."""
@@ -202,23 +202,26 @@ class TestJSONOutput:
         assert "summary" in data
 
     def test_json_loci_structure(self, suspect_report):
-        """Test that JSON loci section has correct structure."""
+        """Test that JSON loci section has PRD-compliant structure."""
         reports = {"locus_A": suspect_report}
         result = generate_report(reports, format="json")
         data = json.loads(result)
         assert "locus_A" in data["loci"]
         locus_data = data["loci"]["locus_A"]
-        assert "similarities" in locus_data
+        assert "allele_count" in locus_data
+        assert "similarity_stats" in locus_data
         assert "threshold" in locus_data
-        assert "statistics" in locus_data
+        assert "threshold_method" in locus_data
+        assert "suspect_pairs" in locus_data
 
     def test_json_suspect_pairs_structure(self, suspect_report):
-        """Test that JSON suspect_pairs section has correct structure."""
+        """Test that JSON suspect_pairs are per-locus inside loci section."""
         reports = {"locus_A": suspect_report}
         result = generate_report(reports, format="json")
         data = json.loads(result)
-        assert len(data["suspect_pairs"]["locus_A"]) == 2
-        for pair in data["suspect_pairs"]["locus_A"]:
+        pairs = data["loci"]["locus_A"]["suspect_pairs"]
+        assert len(pairs) == 2
+        for pair in pairs:
             assert "allele1" in pair
             assert "allele2" in pair
             assert "similarity" in pair
@@ -445,8 +448,8 @@ class TestEdgeCases:
         result = generate_report(reports, format="json")
         data = json.loads(result)
         locus_data = data["loci"]["locus_A"]
-        # Check that similarities are preserved
-        assert len(locus_data["similarities"]) == len(suspect_report.similarities)
+        # Check that suspect_pairs are preserved (one per suspect pair in input)
+        assert len(locus_data["suspect_pairs"]) == len(suspect_report.suspect_pairs)
 
 
 class TestFormatIntegration:

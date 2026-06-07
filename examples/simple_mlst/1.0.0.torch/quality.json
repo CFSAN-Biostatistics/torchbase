@@ -1,0 +1,45 @@
+{
+  "loci": {
+    "adk": {
+      "allele_count": 2,
+      "kmer_size": 31,
+      "similarity_stats": {
+        "min": 0.85,
+        "median": 0.92,
+        "percentile_99": 0.99
+      },
+      "threshold": 0.85,
+      "threshold_method": "gap_detection",
+      "suspect_pairs": []
+    },
+    "fumC": {
+      "allele_count": 2,
+      "kmer_size": 31,
+      "similarity_stats": {
+        "min": 0.85,
+        "median": 0.92,
+        "percentile_99": 0.99
+      },
+      "threshold": 0.85,
+      "threshold_method": "gap_detection",
+      "suspect_pairs": []
+    },
+    "gyrB": {
+      "allele_count": 2,
+      "kmer_size": 31,
+      "similarity_stats": {
+        "min": 0.85,
+        "median": 0.92,
+        "percentile_99": 0.99
+      },
+      "threshold": 0.85,
+      "threshold_method": "gap_detection",
+      "suspect_pairs": []
+    }
+  },
+  "summary": {
+    "total_loci": 3,
+    "suspect_loci": 0,
+    "suspect_alleles": 0
+  }
+}

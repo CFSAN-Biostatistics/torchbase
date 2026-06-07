@@ -3,6 +3,7 @@ version 1.0
 import "tasks/minhash.wdl" as minhash_tasks
 import "tasks/profile_lookup.wdl" as profile_tasks
 import "tasks/filter_alleles.wdl" as filter
+import "tasks/depth_filter.wdl" as depth
 
 workflow fast_typing {
     input {
@@ -11,10 +12,21 @@ workflow fast_typing {
         File profiles_table
         Int ksize = 31
         Int sketch_size = 1000
+        String input_type = "contigs"
+        Int min_depth = 3
         File? quality_json
         Boolean exclude_suspect_alleles = false
         Boolean exclude_suspect_loci = false
         Boolean exclude_suspect_profiles = false
+    }
+
+    # Remove low-coverage sequences before allele calling (no-op for contigs)
+    call depth.depth_filter {
+        input:
+            sequences = query_sequences,
+            input_type = input_type,
+            min_depth = min_depth,
+            ksize = ksize
     }
 
     # Filter alleles if quality.json provided
@@ -31,7 +43,7 @@ workflow fast_typing {
 
     call minhash_tasks.sketch_sequences as sketch_queries {
         input:
-            sequences = query_sequences,
+            sequences = depth_filter.filtered_sequences,
             ksize = ksize,
             scaled = sketch_size
     }
@@ -53,7 +65,7 @@ workflow fast_typing {
     call minhash_tasks.call_alleles {
         input:
             similarity_matrix = compare_sketches.similarity_csv,
-            query_sequences = query_sequences,
+            query_sequences = depth_filter.filtered_sequences,
             allele_fasta = working_allele_fasta
     }
 

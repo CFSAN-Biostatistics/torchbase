@@ -6,6 +6,7 @@ task lookup_profile {
         File profiles_table
         String strategy = "balanced"
         Boolean alignment_used = false
+        String scheme = ""
     }
 
     command <<<
@@ -46,15 +47,20 @@ def build_profile_string(allele_calls, loci_order):
 
 def lookup_profile(profile_str, profiles, loci_order):
     """Look up profile in profile table."""
+    st_col = None
     for profile in profiles:
-        # Build table profile string
+        if st_col is None:
+            for col in profile.keys():
+                if col.upper() == 'ST':
+                    st_col = col
+                    break
+
         table_parts = []
         for locus in loci_order:
             if locus in profile:
                 table_parts.append(profile[locus])
         table_profile = ','.join(table_parts)
 
-        # Check for exact match or wildcards
         match = True
         query_parts = profile_str.split(',')
         table_parts_list = table_profile.split(',')
@@ -63,36 +69,74 @@ def lookup_profile(profile_str, profiles, loci_order):
             continue
 
         for query_part, table_part in zip(query_parts, table_parts_list):
-            if query_part == '?':  # Wildcard matches anything
+            if query_part == '?':
                 continue
-            if table_part == '?':  # Wildcard in table matches anything
+            if table_part == '?':
                 continue
             if query_part != table_part:
                 match = False
                 break
 
-        if match:
-            # Found matching profile
-            st_col = None
+        if match and st_col:
+            return profile[st_col], "known_profile"
+
+    return None, "novel_profile"
+
+
+def find_nearest_st(profile_str, profiles, loci_order):
+    """Find nearest ST by Hamming distance for novel profiles."""
+    query_parts = profile_str.split(',')
+    best_st = None
+    best_distance = float('inf')
+    st_col = None
+
+    for profile in profiles:
+        if st_col is None:
             for col in profile.keys():
                 if col.upper() == 'ST':
                     st_col = col
                     break
-            if st_col:
-                return profile[st_col], "known_profile"
+        if st_col is None:
+            continue
 
-    # No exact match found
-    return None, "novel_profile"
+        table_parts = [profile.get(locus, '?') for locus in loci_order]
+        if len(table_parts) != len(query_parts):
+            continue
+
+        distance = sum(
+            0 if q == '?' or t == '?' or q == t else 1
+            for q, t in zip(query_parts, table_parts)
+        )
+        if distance < best_distance:
+            best_distance = distance
+            best_st = profile[st_col]
+
+    return best_st, best_distance
+
 
 # Main
 allele_calls = parse_allele_calls("~{allele_calls}")
 profiles, loci_order = parse_profiles_table("~{profiles_table}")
+
+# Infer scheme from profiles_table path if not provided
+import os
+provided_scheme = "~{scheme}"
+if provided_scheme:
+    scheme_name = provided_scheme
+else:
+    scheme_name = os.path.basename(os.path.dirname("~{profiles_table}"))
 
 # Build profile string
 profile_str = build_profile_string(allele_calls, loci_order)
 
 # Lookup profile
 profile_id, status = lookup_profile(profile_str, profiles, loci_order)
+
+# For novel profiles, find nearest ST
+nearest_st = None
+nearest_st_distance = None
+if status == "novel_profile" and profiles:
+    nearest_st, nearest_st_distance = find_nearest_st(profile_str, profiles, loci_order)
 
 # Calculate confidence from allele calls
 confidences = []
@@ -112,6 +156,7 @@ alignment_used = ~{alignment_used}
 result = {
     "profile_id": profile_id if profile_id else "unknown",
     "profile_type": "sequence_type",
+    "scheme": scheme_name,
     "status": status,
     "confidence": max(0.0, min(1.0, overall_confidence)),
     "allele_profile": profile_str,
@@ -127,6 +172,10 @@ result = {
         "mean_confidence": overall_confidence
     }
 }
+
+if nearest_st is not None:
+    result["nearest_st"] = nearest_st
+    result["nearest_st_distance"] = nearest_st_distance
 
 # Write result
 with open('profile_result.json', 'w') as f:

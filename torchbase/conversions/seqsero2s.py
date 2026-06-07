@@ -1,14 +1,23 @@
-"""ShigaTyper converter — local FASTA files to torch format.
+"""SeqSero2S converter — local database files to torch format.
 
-ShigaTyper identifies Shigella serotypes by typing wzx/wzy (O-antigen)
-and fliC (H-antigen) loci.
+SeqSero2S is a curated variant of SeqSero2 (github.com/LSTUGA/SeqSero2S) that:
+- Uses a corrected allele database (H_and_O_and_specific_genes.fasta)
+- Adds 7-gene MLST for sequence typing (aroC, dnaN, hemD, hisD, purE, sucA, thrA)
+- Follows the simplified Kauffmann-White-Le Minor (KWS) nomenclature
 
-If a profiles TSV is provided it is used as-is; otherwise a stub header-only
-table is written so the torch is immediately loadable.
+Database inputs expected:
+  - Antigen FASTA: H_and_O_and_specific_genes.fasta (O-antigen, fliC, fljB alleles)
+  - MLST FASTAs:  aroC.tfa  dnaN.tfa  hemD.tfa  hisD.tfa  purE.tfa  sucA.tfa  thrA.tfa
+                  (from seqsero2s_db/kmer/)
+  - MLST profiles: salmonella_profile.txt (TSV: ST, aroC, dnaN, hemD, hisD, purE, sucA, thrA)
+  - Serotype profiles: serotypes TSV (Serotype, O, H1, H2)
 
 Usage:
-    torchtools convert shigatyper wzx.fasta wzy.fasta fliC.fasta
-    torchtools convert shigatyper --profiles serotypes.tsv wzx.fasta wzy.fasta fliC.fasta
+    torchtools convert seqsero2s \\
+        --antigen-db H_and_O_and_specific_genes.fasta \\
+        --mlst-profiles salmonella_profile.txt \\
+        --serotype-profiles serotypes.tsv \\
+        aroC.tfa dnaN.tfa hemD.tfa hisD.tfa purE.tfa sucA.tfa thrA.tfa
 """
 
 import csv
@@ -23,30 +32,37 @@ import toml
 from torchbase.quality.kmer_analysis import analyze_locus
 
 
-TAXA = ["Shigella"]
+TAXA = ["Salmonella enterica"]
+MLST_LOCI = ["aroC", "dnaN", "hemD", "hisD", "purE", "sucA", "thrA"]
 
 
 def convert_local(
     sequence_files: List[IO],
-    profiles_file: Optional[IO] = None,
+    antigen_db: Optional[IO] = None,
+    mlst_profiles: Optional[IO] = None,
+    serotype_profiles: Optional[IO] = None,
     output_path: str = ".",
-    namespace: str = "shigatyper",
-    name: str = "shigatyper",
+    namespace: str = "seqsero2s",
+    name: str = "seqsero2s",
     version: str = "1.0.0",
     kmer_size: int = 13,
     overlap_threshold: float = 0.90,
     duplicate_threshold: float = 0.95,
 ) -> str:
-    """Convert local ShigaTyper FASTA files to torch format.
+    """Convert local SeqSero2S database files to torch format.
 
     Args:
-        sequence_files: Open file handles for antigen gene FASTA files.
-        profiles_file: Optional open file handle for serotype profiles TSV.
-            Columns: Serotype, O, H (at minimum). If absent, a stub
-            header-only table is written so the torch is loadable.
+        sequence_files: Open file handles for MLST locus FASTA files
+            (aroC.tfa, dnaN.tfa, etc. — extension does not matter).
+        antigen_db: Open file handle for the combined antigen FASTA
+            (H_and_O_and_specific_genes.fasta). Copied as antigen_db.fasta.
+        mlst_profiles: Open file handle for salmonella_profile.txt (TSV:
+            ST, aroC, dnaN, hemD, hisD, purE, sucA, thrA).
+        serotype_profiles: Open file handle for serotype definitions TSV
+            (Serotype, O, H1, H2). Used as the primary profiles.tsv.
         output_path: Directory in which to create the torch.
-        namespace: Torch namespace (default: "shigatyper").
-        name: Torch name (default: "shigatyper").
+        namespace: Torch namespace (default: "seqsero2s").
+        name: Torch name (default: "seqsero2s").
         version: Torch version string.
         kmer_size: K-mer size for quality analysis.
         overlap_threshold: Overlap similarity threshold.
@@ -62,25 +78,47 @@ def convert_local(
     resources_dir = torch_dir / "_resources"
     resources_dir.mkdir(exist_ok=True)
 
+    mlst_dir = resources_dir / "mlst"
+    mlst_dir.mkdir(exist_ok=True)
+
+    # Copy MLST locus files
     locus_names = []
     for fasta_fh in sequence_files:
         src = Path(fasta_fh.name)
-        dest = resources_dir / src.name
+        # Normalise extension to .fasta
+        dest_name = src.stem + ".fasta"
+        dest = mlst_dir / dest_name
         shutil.copy2(src, dest)
         locus_names.append(src.stem)
 
-    profiles_dest = torch_dir / "profiles.tsv"
-    if profiles_file is not None:
-        shutil.copy2(profiles_file.name, profiles_dest)
-        profiles_file.seek(0)
-        rows = list(csv.reader(profiles_file, delimiter="\t"))
-        profile_count = max(0, len(rows) - 1)
+    # Copy antigen database FASTA
+    if antigen_db is not None:
+        dest = resources_dir / "antigen_db.fasta"
+        shutil.copy2(antigen_db.name, dest)
+
+    # Write MLST profiles into resources
+    if mlst_profiles is not None:
+        dest = resources_dir / "mlst_profiles.tsv"
+        shutil.copy2(mlst_profiles.name, dest)
+        mlst_profiles.seek(0)
+        mlst_rows = list(csv.reader(mlst_profiles, delimiter="\t"))
+        mlst_profile_count = max(0, len(mlst_rows) - 1)
     else:
-        _write_stub_profiles(profiles_dest, locus_names)
-        profile_count = 0
+        mlst_profile_count = 0
+
+    # Write serotype profiles as the primary profiles.tsv
+    profiles_dest = torch_dir / "profiles.tsv"
+    if serotype_profiles is not None:
+        shutil.copy2(serotype_profiles.name, profiles_dest)
+        serotype_profiles.seek(0)
+        rows = list(csv.reader(serotype_profiles, delimiter="\t"))
+        serotype_count = max(0, len(rows) - 1)
+    else:
+        _write_stub_serotype_profiles(profiles_dest)
+        serotype_count = 0
 
     quality_results = _run_quality_analysis(
-        resources_dir, kmer_size, overlap_threshold, duplicate_threshold
+        mlst_dir, kmer_size, overlap_threshold, duplicate_threshold
     )
 
     now = datetime.now(timezone.utc).isoformat()
@@ -91,13 +129,19 @@ def convert_local(
         "version_info": {"strategy": "snapshot", "timestamp": now},
         "typing": {
             "method": "serotyping",
-            "scheme": "Shigella O:H antigen",
-            "loci_count": len(locus_names),
-            "profiles_count": profile_count,
+            "scheme": "SeqSero2S simplified KWS + 7-gene MLST",
+            "antigen_loci": ["O-antigen", "fliC", "fljB"],
+            "mlst_loci": MLST_LOCI,
+            "serotype_count": serotype_count,
+            "mlst_profile_count": mlst_profile_count,
         },
         "description": {
-            "short": "ShigaTyper Shigella serotyping torch",
-            "long": "Shigella serotyping based on wzx/wzy O-antigen and fliC H-antigen loci",
+            "short": "SeqSero2S Salmonella serotyping + MLST torch",
+            "long": (
+                "Salmonella enterica serotyping (simplified KWS) combined with "
+                "7-gene MLST sequence typing (aroC, dnaN, hemD, hisD, purE, sucA, thrA). "
+                "Corrected allele database from LSTUGA/SeqSero2S."
+            ),
             "taxa": TAXA,
         },
         "data_quality": {
@@ -123,9 +167,9 @@ def convert_local(
     return str(torch_dir)
 
 
-def _write_stub_profiles(profiles_path: Path, locus_names: List[str]) -> None:
+def _write_stub_serotype_profiles(profiles_path: Path) -> None:
     with open(profiles_path, "w", newline="") as f:
-        csv.writer(f, delimiter="\t").writerow(["Serotype", "O", "H"])
+        csv.writer(f, delimiter="\t").writerow(["Serotype", "O", "H1", "H2", "ST"])
 
 
 def _build_quality_report(locus_names, quality_results, kmer_size, overlap_threshold):
@@ -149,7 +193,7 @@ def _build_quality_report(locus_names, quality_results, kmer_size, overlap_thres
     }
 
 
-def _run_quality_analysis(resources_dir, kmer_size, overlap_threshold, duplicate_threshold):
+def _run_quality_analysis(mlst_dir, kmer_size, overlap_threshold, duplicate_threshold):
     results = {
         "total_loci": 0,
         "suspect_loci": 0,
@@ -157,7 +201,7 @@ def _run_quality_analysis(resources_dir, kmer_size, overlap_threshold, duplicate
         "duplicate_pairs": [],
         "loci_results": {},
     }
-    for fasta_file in sorted(resources_dir.glob("*.fasta")):
+    for fasta_file in sorted(mlst_dir.glob("*.fasta")):
         locus_name = fasta_file.stem
         report = analyze_locus(
             fasta_file,

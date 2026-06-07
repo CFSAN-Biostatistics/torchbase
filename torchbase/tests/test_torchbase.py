@@ -87,16 +87,7 @@ class TestProfileParser:
         assert schema[profile] == "1"
 
 
-head = """Hello and Welcome to IPFS!"""
-
-hash = "/ipfs/QmQPeNsJPyVWPFDVHb77w8G42Fvo15z4bG2X8D2GhfbSXc/readme"
-
-
 class TestTorchFS:
-
-    def test_ipyfs(self):
-        cat = torchbase.torchfs.ipyfs.Cat()
-        assert cat(hash)['result'][0:len(head)] == head
 
     def test_handle_ipfs_errors(self):
         pass

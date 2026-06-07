@@ -9,22 +9,11 @@ task sketch_sequences {
 
     command <<<
         set -e
-        python3 <<PYTHON_SCRIPT
-import os
-
-# Create a mock sketch file (for testing without sourmash)
-# In a real environment, this would call sourmash
-sketch_file = "sequences.sig"
-
-# Create a simple JSON-based sketch representation for testing
-import json
-sequences_data = {"ksize": ~{ksize}, "scaled": ~{scaled}, "type": "DNA"}
-
-with open(sketch_file, 'w') as f:
-    f.write("")  # Create an empty file to represent the sketch
-
-os.chmod(sketch_file, 0o644)
-PYTHON_SCRIPT
+        sourmash sketch dna \
+            -p k=~{ksize},scaled=~{scaled} \
+            ~{sequences} \
+            -o sequences.sig \
+            --singleton
     >>>
 
     output {
@@ -33,7 +22,7 @@ PYTHON_SCRIPT
 
     runtime {
         cpu: 1
-        memory: "1 GB"
+        memory: "2 GB"
     }
 }
 
@@ -42,61 +31,25 @@ task compare_sketches {
         File query_sketch
         File allele_sketch
         File allele_fasta
+        Int ksize = 31
+        Int scaled = 1000
     }
 
     command <<<
         set -e
-        python3 <<PYTHON_SCRIPT
-import csv
+        # Sketch allele FASTA with one signature per sequence
+        sourmash sketch dna \
+            -p k=~{ksize},scaled=~{scaled} \
+            ~{allele_fasta} \
+            -o alleles.sig \
+            --singleton
 
-# Create a mock similarity matrix for testing
-# In a real environment, this would call sourmash compare
-# This simulates exact matches for sequences
-
-def parse_fasta(fasta_path):
-    sequences = []
-    with open(fasta_path) as f:
-        current_header = None
-        current_seq = []
-        for line in f:
-            line = line.strip()
-            if line.startswith('>'):
-                if current_header is not None:
-                    sequences.append((current_header, ''.join(current_seq)))
-                current_header = line[1:]
-                current_seq = []
-            else:
-                current_seq.append(line)
-        if current_header is not None:
-            sequences.append((current_header, ''.join(current_seq)))
-    return sequences
-
-alleles = parse_fasta("~{allele_fasta}")
-
-# Create a simple similarity matrix
-# For testing: simulate perfect matches and lower similarities
-num_alleles = len(alleles)
-num_queries = num_alleles  # Assume we have one query per allele in test
-
-with open('similarity.csv', 'w') as f:
-    writer = csv.writer(f)
-
-    # Write header with query and allele names
-    headers = [f"query_{i}" for i in range(num_queries)] + [allele[0] for allele in alleles]
-    writer.writerow(headers)
-
-    # Write similarity data - simple identity matrix for testing
-    for i in range(num_queries):
-        row = []
-        for j in range(num_queries):
-            row.append(1.0 if i == j else 0.0)
-        for j in range(num_alleles):
-            # High similarity for matching alleles, lower for others
-            similarity = 1.0 if i == j else 0.5 + (0.01 * abs(i - j))
-            row.append(similarity)
-        writer.writerow(row)
-
-PYTHON_SCRIPT
+        # Compare query against allele sketches, output ANI-based CSV matrix
+        sourmash compare \
+            ~{query_sketch} alleles.sig \
+            --csv similarity.csv \
+            --ani \
+            -k ~{ksize}
     >>>
 
     output {
@@ -104,8 +57,8 @@ PYTHON_SCRIPT
     }
 
     runtime {
-        cpu: 1
-        memory: "1 GB"
+        cpu: 2
+        memory: "4 GB"
     }
 }
 

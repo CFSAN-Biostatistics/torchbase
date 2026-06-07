@@ -4,6 +4,7 @@ import "tasks/minhash.wdl" as minhash
 import "tasks/alignment.wdl" as alignment
 import "tasks/profile_lookup.wdl" as profile_lookup
 import "tasks/filter_alleles.wdl" as filter
+import "tasks/depth_filter.wdl" as depth
 
 workflow balanced_typing {
     input {
@@ -12,13 +13,22 @@ workflow balanced_typing {
         File profiles_table
         String input_type = "contigs"
         Float confidence_threshold = 0.85
+        Int min_depth = 3
         File? quality_json
         Boolean exclude_suspect_alleles = false
         Boolean exclude_suspect_loci = false
         Boolean exclude_suspect_profiles = false
     }
 
-    # Step 0: Filter alleles based on quality.json if provided
+    # Step 0a: Remove low-coverage sequences (no-op for contigs)
+    call depth.depth_filter {
+        input:
+            sequences = query_sequences,
+            input_type = input_type,
+            min_depth = min_depth
+    }
+
+    # Step 0b: Filter alleles based on quality.json if provided
     call filter.filter_alleles {
         input:
             allele_fasta = allele_fasta,
@@ -34,7 +44,7 @@ workflow balanced_typing {
     # Step 1: MinHash sketching and comparison
     call minhash.sketch_sequences as sketch_queries {
         input:
-            sequences = query_sequences,
+            sequences = depth_filter.filtered_sequences,
             ksize = 31,
             scaled = 1000
     }
@@ -57,24 +67,22 @@ workflow balanced_typing {
     call minhash.call_alleles_minhash {
         input:
             similarity_matrix = compare_sketches.similarity_csv,
-            query_sequences = query_sequences,
+            query_sequences = depth_filter.filtered_sequences,
             allele_fasta = working_allele_fasta,
             confidence_threshold = confidence_threshold
     }
 
     # Step 3: Determine if alignment fallback is needed
-    # We need to check if any locus has confidence < threshold
     call check_confidence_for_alignment {
         input:
             allele_calls = call_alleles_minhash.allele_calls,
             confidence_threshold = confidence_threshold
     }
 
-    # Step 4: Conditional alignment fallback
-    # Uses asm5 preset for contigs, sr preset for reads
+    # Step 4: Conditional alignment fallback (asm5 for contigs, sr for reads)
     call alignment.align_and_call as alignment_fallback {
         input:
-            query_sequences = query_sequences,
+            query_sequences = depth_filter.filtered_sequences,
             allele_fasta = working_allele_fasta,
             input_type = input_type,
             identity_threshold = 0.90

@@ -4,6 +4,7 @@ import "tasks/minhash.wdl" as minhash
 import "tasks/alignment.wdl" as alignment
 import "tasks/profile_lookup.wdl" as profile_lookup
 import "tasks/filter_alleles.wdl" as filter
+import "tasks/depth_filter.wdl" as depth
 
 workflow sensitive_typing {
     input {
@@ -11,6 +12,8 @@ workflow sensitive_typing {
         File allele_database
         File profiles
         String preset = "asm5"
+        String input_type = "contigs"
+        Int min_depth = 3
         Float confidence_threshold = 0.95
         File? quality_json
         Boolean exclude_suspect_alleles = false
@@ -18,7 +21,15 @@ workflow sensitive_typing {
         Boolean exclude_suspect_profiles = false
     }
 
-    # Step 0: Filter alleles if quality.json provided
+    # Step 0a: Remove low-coverage sequences (no-op for contigs)
+    call depth.depth_filter {
+        input:
+            sequences = query_sequences,
+            input_type = input_type,
+            min_depth = min_depth
+    }
+
+    # Step 0b: Filter alleles if quality.json provided
     call filter.filter_alleles {
         input:
             allele_fasta = allele_database,
@@ -33,7 +44,7 @@ workflow sensitive_typing {
     # Step 1: Sketch query sequences with MinHash (for guidance only)
     call minhash.sketch_sequences as sketch_queries {
         input:
-            sequences = query_sequences,
+            sequences = depth_filter.filtered_sequences,
             ksize = 31,
             scaled = 1000
     }
@@ -59,7 +70,7 @@ workflow sensitive_typing {
     # Uses minimap2 with asm5 or asm5+eqx preset for high accuracy
     call alignment.align_and_call as alignment_call {
         input:
-            query_sequences = query_sequences,
+            query_sequences = depth_filter.filtered_sequences,
             allele_fasta = working_allele_fasta,
             input_type = "contigs",
             identity_threshold = confidence_threshold

@@ -8,15 +8,6 @@ import csv
 from unittest import mock
 import os
 
-# Mock ipyfs if it's not available
-try:
-    import ipyfs
-except ImportError:
-    ipyfs_mock = mock.MagicMock()
-    ipyfs_mock.Cat = mock.MagicMock(return_value=mock.MagicMock())
-    import sys
-    sys.modules['ipyfs'] = ipyfs_mock
-
 
 @pytest.fixture(scope="session", autouse=True)
 def configure_miniwdl_local_backend():

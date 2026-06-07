@@ -84,13 +84,10 @@ def convert_scheme(
     # Extract allele sequences and write FASTA files
     allele_counts = {}
     for locus in scheme_data.loci:
-        # For now, we'll create stub FASTA files
-        # In a real implementation, these would be fetched from the API
         fasta_path = alleles_dir / f"{locus.locus_id}.fasta"
         allele_counts[locus.locus_id] = locus.alleles_count
-
-        # Create minimal FASTA content (stub for now)
-        _write_stub_fasta(fasta_path, locus.locus_id)
+        fasta_text = client._fetch_alleles_fasta(database_name, locus.locus_id)
+        fasta_path.write_text(fasta_text)
 
     # Write profiles.tsv from scheme data
     profiles_path = organism_dir / "profiles.tsv"
@@ -164,21 +161,6 @@ def _sanitize_name(name: str) -> str:
         Sanitized name with spaces replaced by underscores
     """
     return name.replace(" ", "_").replace("/", "_").lower()
-
-
-def _write_stub_fasta(fasta_path: Path, locus_id: str) -> None:
-    """Write a stub FASTA file for testing.
-
-    Args:
-        fasta_path: Path to write FASTA file
-        locus_id: Locus identifier
-    """
-    with open(fasta_path, "w") as f:
-        # Write stub sequences
-        f.write(f">{locus_id}_1\n")
-        f.write("ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATG\n")
-        f.write(f">{locus_id}_2\n")
-        f.write("ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATG\n")
 
 
 def _write_profiles_tsv(profiles_path: Path, profiles: List[Dict[str, str]]) -> None:
@@ -306,6 +288,10 @@ def _generate_metadata(
         "namespace": namespace,
         "name": name,
         "version": version,
+        "version_info": {
+            "strategy": "snapshot",
+            "timestamp": now,
+        },
         "provenance": {
             "source": "PubMLST",
             "database_url": database_url,

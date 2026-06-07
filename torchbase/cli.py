@@ -124,7 +124,33 @@ def _pull(torch, force_use_gateway=False, pin=False, version=None):
 @torch
 def _info(torch):
     "Display info for the selected torch."
-    pass
+    from torchbase.torchfs import Torch
+    from torchbase.registry import RegistryManager
+    from torchbase.config import RegistryConfig
+    import toml
+
+    config = RegistryConfig.load()
+    manager = RegistryManager(config)
+    try:
+        torch_path = manager.fetch_torch(torch)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    metadata_path = torch_path / "metadata.toml"
+    if not metadata_path.exists():
+        raise click.ClickException(f"metadata.toml not found at {torch_path}")
+
+    with open(metadata_path) as f:
+        metadata = toml.load(f)
+
+    rows = []
+    for key in ("namespace", "name", "version"):
+        if key in metadata:
+            rows.append((key, metadata[key]))
+    for section in ("provenance", "typing"):
+        for k, v in metadata.get(section, {}).items():
+            rows.append((f"{section}.{k}", v))
+    click.echo(tabulate(rows, headers=["Field", "Value"], tablefmt="simple"))
 
 
 @cli.group("workflow")
@@ -452,7 +478,11 @@ def _analyze_sequences(file_input):
     # Reads: mean length < 500bp
     # Edge cases: default to balanced
 
-    if mean_length > 1000:
+    if mean_length > 10000:
+        sequence_type = 'long_reads'
+        selected_strategy = 'sensitive'
+        rationale = f'long reads detected (mean: {int(mean_length)}bp), selected sensitive strategy'
+    elif mean_length > 1000:
         sequence_type = 'contigs'
         selected_strategy = 'fast'
         rationale = f'contigs detected (mean: {int(mean_length)}bp, N50: {n50}bp), selected fast strategy'
@@ -714,16 +744,65 @@ def call(ctx, schema, json_profile=None):
 
 @tools.command("version")
 @torch
+@click.option("--bump", type=click.Choice(["patch", "minor", "major"]), default="patch", show_default=True,
+              help="Version component to increment.")
 @click.argument("checkpoint", required=False)
-def _version(torch, checkpoint=None):
-    "Set a version of a currently-built database."
-    pass
+def _version(torch, bump="patch", checkpoint=None):
+    "Bump the version of a currently-built torch."
+    import toml
+    torch_path = Path(torch)
+    metadata_path = torch_path / "metadata.toml"
+    if not metadata_path.exists():
+        raise click.ClickException(f"metadata.toml not found at {torch_path}")
+
+    with open(metadata_path) as f:
+        metadata = toml.load(f)
+
+    version_str = str(metadata.get("version", "1.0.0"))
+    try:
+        parts = [int(x) for x in version_str.split(".")]
+        while len(parts) < 3:
+            parts.append(0)
+    except ValueError:
+        raise click.ClickException(f"Cannot parse version: {version_str}")
+
+    if bump == "major":
+        parts = [parts[0] + 1, 0, 0]
+    elif bump == "minor":
+        parts = [parts[0], parts[1] + 1, 0]
+    else:
+        parts = [parts[0], parts[1], parts[2] + 1]
+
+    new_version = ".".join(str(p) for p in parts)
+    metadata["version"] = new_version
+
+    with open(metadata_path, "w") as f:
+        toml.dump(metadata, f)
+
+    click.echo(f"Bumped version {version_str} -> {new_version}")
+
 
 @tools.command("build")
 @torch
 def _build(torch):
-    "Build a torch's database."
-    pass
+    "Validate a torch's database structure."
+    from torchbase.torchfs import Torch
+
+    torch_path = Path(torch)
+    try:
+        result = Torch.load(torch_path)
+    except (FileNotFoundError, ValueError) as e:
+        raise click.ClickException(f"Validation failed: {e}")
+
+    rows = [
+        ("path", str(result.path)),
+        ("schemes", len(result.schemes) if result.schemes else 1),
+        ("references", len(result.references) if result.references else sum(
+            len(v) for v in result.scheme_references.values())),
+        ("workflow", str(result.workflow) if result.workflow else "built-in"),
+    ]
+    click.echo(tabulate(rows, headers=["Field", "Value"], tablefmt="simple"))
+    click.echo("Torch structure is valid.")
 
 @tools.command("convert-pubmlst")
 @click.option("--url", required=True, help="PubMLST database API URL")
@@ -764,9 +843,153 @@ def _pubmlst_legacy(scheme, sequences=[]):
 @convert.command("pubcgmlst")
 @click.argument("scheme", type=click.File())
 @click.argument("sequences", type=click.File(), nargs=-1)
-def _pubcgmlst():
+@click.option("--output", default=".", show_default=True, help="Output directory")
+@click.option("--namespace", default="pubcgmlst", show_default=True)
+@click.option("--name", default=None, help="Torch name (default: scheme filename stem)")
+@click.option("--kmer-size", default=13, type=int, show_default=True)
+@click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
+@click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
+def _pubcgmlst(scheme, sequences, output, namespace, name, kmer_size, overlap_threshold, duplicate_threshold):
     "Create a torch from a PubMLST cgMLST database and schema."
-    pass
+    from torchbase.conversions.pubcgmlst import convert_local
+
+    try:
+        torch_path = convert_local(
+            scheme_file=scheme,
+            sequence_files=list(sequences),
+            output_path=output,
+            namespace=namespace,
+            name=name,
+            kmer_size=kmer_size,
+            overlap_threshold=overlap_threshold,
+            duplicate_threshold=duplicate_threshold,
+        )
+        click.echo(f"Created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
+
+@convert.command("seqsero2")
+@click.argument("sequences", type=click.File(), nargs=-1)
+@click.option("--profiles", type=click.File(), default=None, help="Serotype definitions TSV (Serotype, O, H1, H2)")
+@click.option("--output", default=".", show_default=True, help="Output directory")
+@click.option("--name", default="seqsero2", show_default=True, help="Torch name")
+@click.option("--kmer-size", default=13, type=int, show_default=True)
+@click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
+@click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
+def _seqsero2(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold):
+    "Create a torch from SeqSero2 Salmonella serotyping database files."
+    from torchbase.conversions.seqsero2 import convert_local
+
+    try:
+        torch_path = convert_local(
+            sequence_files=list(sequences),
+            profiles_file=profiles,
+            output_path=output,
+            name=name,
+            kmer_size=kmer_size,
+            overlap_threshold=overlap_threshold,
+            duplicate_threshold=duplicate_threshold,
+        )
+        click.echo(f"Created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
+
+
+@convert.command("seqsero2s")
+@click.argument("sequences", type=click.File(), nargs=-1,
+                metavar="[MLST_FASTAS]...",)
+@click.option("--antigen-db", type=click.File(), default=None,
+              help="Combined antigen FASTA (H_and_O_and_specific_genes.fasta)")
+@click.option("--mlst-profiles", type=click.File(), default=None,
+              help="MLST allele-to-ST table (salmonella_profile.txt)")
+@click.option("--serotype-profiles", type=click.File(), default=None,
+              help="Serotype definitions TSV (Serotype, O, H1, H2)")
+@click.option("--output", default=".", show_default=True, help="Output directory")
+@click.option("--name", default="seqsero2s", show_default=True, help="Torch name")
+@click.option("--kmer-size", default=13, type=int, show_default=True)
+@click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
+@click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
+def _seqsero2s(sequences, antigen_db, mlst_profiles, serotype_profiles,
+               output, name, kmer_size, overlap_threshold, duplicate_threshold):
+    "Create a torch from SeqSero2S (LSTUGA) Salmonella serotyping + MLST database files."
+    from torchbase.conversions.seqsero2s import convert_local
+
+    try:
+        torch_path = convert_local(
+            sequence_files=list(sequences),
+            antigen_db=antigen_db,
+            mlst_profiles=mlst_profiles,
+            serotype_profiles=serotype_profiles,
+            output_path=output,
+            name=name,
+            kmer_size=kmer_size,
+            overlap_threshold=overlap_threshold,
+            duplicate_threshold=duplicate_threshold,
+        )
+        click.echo(f"Created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
+
+
+@convert.command("ectyper")
+@click.argument("sequences", type=click.File(), nargs=-1)
+@click.option("--profiles", type=click.File(), default=None, help="Serotype definitions TSV (Serotype, O, H)")
+@click.option("--db", "db_fasta", type=click.File(), default=None,
+              help="Combined ECTyper database FASTA (split automatically into O/H files)")
+@click.option("--output", default=".", show_default=True, help="Output directory")
+@click.option("--name", default="ectyper", show_default=True, help="Torch name")
+@click.option("--kmer-size", default=13, type=int, show_default=True)
+@click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
+@click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
+def _ectyper(sequences, profiles, db_fasta, output, name, kmer_size, overlap_threshold, duplicate_threshold):
+    "Create a torch from ECTyper E. coli / Shigella serotyping database files."
+    from torchbase.conversions.ectyper import convert_local
+
+    if not sequences and db_fasta is None:
+        raise click.UsageError("Provide SEQUENCES files or --db for a combined FASTA.")
+    try:
+        torch_path = convert_local(
+            sequence_files=list(sequences),
+            profiles_file=profiles,
+            db_fasta=db_fasta,
+            output_path=output,
+            name=name,
+            kmer_size=kmer_size,
+            overlap_threshold=overlap_threshold,
+            duplicate_threshold=duplicate_threshold,
+        )
+        click.echo(f"Created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
+
+
+@convert.command("lissero")
+@click.argument("sequences", type=click.File(), nargs=-1)
+@click.option("--profiles", type=click.File(), default=None,
+              help="Serogroup definitions TSV (Serogroup, prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh, lin0764, lin1118)")
+@click.option("--output", default=".", show_default=True, help="Output directory")
+@click.option("--name", default="lissero", show_default=True, help="Torch name")
+@click.option("--kmer-size", default=13, type=int, show_default=True)
+@click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
+@click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
+def _lissero(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold):
+    "Create a torch from LisSero Listeria monocytogenes serogroup database files."
+    from torchbase.conversions.lissero import convert_local
+
+    try:
+        torch_path = convert_local(
+            sequence_files=list(sequences),
+            profiles_file=profiles,
+            output_path=output,
+            name=name,
+            kmer_size=kmer_size,
+            overlap_threshold=overlap_threshold,
+            duplicate_threshold=duplicate_threshold,
+        )
+        click.echo(f"Created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
+
 
 @convert.command("chewie-ns")
 @click.argument("scheme", type=click.File())
@@ -777,9 +1000,29 @@ def _chewie_ns():
 
 @convert.command("shigatyper")
 @click.argument("sequences", type=click.File(), nargs=-1)
-def _shigatyper():
+@click.option("--profiles", type=click.File(), default=None, help="Serotype profiles TSV")
+@click.option("--output", default=".", show_default=True, help="Output directory")
+@click.option("--name", default="shigatyper", show_default=True, help="Torch name")
+@click.option("--kmer-size", default=13, type=int, show_default=True)
+@click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
+@click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
+def _shigatyper(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold):
     "Create a torch from ShigaTyper's database."
-    pass
+    from torchbase.conversions.shigatyper import convert_local
+
+    try:
+        torch_path = convert_local(
+            sequence_files=list(sequences),
+            profiles_file=profiles,
+            output_path=output,
+            name=name,
+            kmer_size=kmer_size,
+            overlap_threshold=overlap_threshold,
+            duplicate_threshold=duplicate_threshold,
+        )
+        click.echo(f"Created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
 
 
 

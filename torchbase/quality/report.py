@@ -135,30 +135,25 @@ def _format_json_output(
     # Build the loci section
     loci_data = {}
     for locus_name, report in locus_reports.items():
+        stats = report.statistics
         loci_data[locus_name] = {
-            "similarities": {
-                f"{pair[0]}-{pair[1]}": sim
-                for pair, sim in report.similarities.items()
+            "allele_count": len(report.similarities) + 1 if report.similarities else 0,
+            "kmer_size": stats.get("kmer_size", None),
+            "similarity_stats": {
+                "min": stats.get("min", 0.0),
+                "median": stats.get("median", stats.get("mean", 0.0)),
+                "percentile_99": stats.get("percentile_99", 0.0),
             },
             "threshold": report.threshold,
-            "statistics": report.statistics,
+            "threshold_method": stats.get("threshold_type", "gap_detection"),
+            "suspect_pairs": report.suspect_pairs,
         }
-
-    # Build the suspect_pairs section
-    suspect_pairs_data = {}
-    for locus_name, report in locus_reports.items():
-        suspect_pairs_data[locus_name] = report.suspect_pairs
 
     # Build summary
     summary = _build_summary(locus_reports)
 
     return {
         "loci": loci_data,
-        "similarity_stats": {
-            locus_name: report.statistics
-            for locus_name, report in locus_reports.items()
-        },
-        "suspect_pairs": suspect_pairs_data,
         "summary": summary.to_dict(),
     }
 
@@ -199,8 +194,8 @@ def _format_text_output(locus_reports: Dict[str, SimilarityReport]) -> str:
         perc_99 = stats.get("percentile_99", 0.0)
         lines.append(f"    99th percentile:      {perc_99:.2f}%")
         lines.append(f"    Threshold:            {report.threshold:.2f}%")
-        threshold_type = stats.get("threshold_type", "unknown")
-        lines.append(f"    Detection method:     {threshold_type}")
+        threshold_method = stats.get("threshold_type", "unknown")
+        lines.append(f"    Detection method:     {threshold_method}")
         lines.append("")
 
         # Histogram

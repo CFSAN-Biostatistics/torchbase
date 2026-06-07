@@ -6,11 +6,7 @@ import tempfile
 
 from torchbase.torchbase import Profile, Schema
 
-try:
-    import ipyfs
-except ImportError:
-    ipyfs = None
-
+import requests
 import toml
 import csv
 
@@ -18,6 +14,10 @@ node = environ.get("TORCHBASE_IPFS_NODE", "localhost")
 port = environ.get("TORCHBASE_IPFS_PORT", 5001)
 
 TORCHBASE_REGISTRY_HASH = ""  # IPFS hash for registry file
+
+
+def _kubo_url(node, port):
+    return f"http://{node}:{port}/api/v0"
 
 
 def handle_ipfs_errors(func):
@@ -30,21 +30,38 @@ def handle_ipfs_errors(func):
     return ipfs_error_handler
 
 
-# @handle_ipfs_errors
 def retrieve_manifest(
     cid=TORCHBASE_REGISTRY_HASH,
     node=node,
     port=port
 ):
-    cat = ipyfs.Cat(host=node, port=port)
-    # get the registry
-    # load and return
-    return toml.loads(cat(cid))
+    response = requests.post(
+        f"{_kubo_url(node, port)}/cat",
+        params={"arg": cid},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return toml.loads(response.text)
 
 
 @handle_ipfs_errors
 def download_torch(cid, node=node, port=port):
-    pass
+    cache_dir = Path.home() / ".torchbase" / "cache" / cid
+    if cache_dir.exists():
+        return cache_dir
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        response = requests.post(
+            f"{_kubo_url(node, port)}/get",
+            params={"arg": cid, "output": str(cache_dir)},
+            timeout=120,
+            stream=True,
+        )
+        response.raise_for_status()
+    except Exception:
+        cache_dir.rmdir()
+        raise
+    return cache_dir
 
 
 @handle_ipfs_errors
@@ -62,7 +79,14 @@ def register_torch(path, node=node, port=port):
 
 @handle_ipfs_errors
 def exists(manifest, torch_entry):
-    return False  # TODO
+    try:
+        cid = torch_entry.get("cid", "")
+        if not cid:
+            return False
+        cache_path = Path.home() / ".torchbase" / "cache" / cid
+        return cache_path.exists()
+    except Exception:
+        return False
 
 
 @dataclass

@@ -426,9 +426,8 @@ class TestWorkflowInspectConditionalBranches:
 
     def test_workflow_without_conditionals_no_branches(self):
         """Workflow without conditionals should not show branch notation."""
-        # We can test with minhash_allele_calling.wdl which has no conditionals
-        # This test will pass once the feature is implemented
-        # It verifies that simple workflows don't show unnecessary branch notation
+        # fast_typing.wdl has no conditional branches — verifies simple workflows
+        # don't emit unnecessary branch notation
         pass
 
 
@@ -814,21 +813,18 @@ class TestWorkflowInspectOutputFormat:
 class TestWorkflowInspectIntegration:
     """Integration tests with real WDL files."""
 
-    def test_inspect_minhash_workflow(self):
-        """Should successfully inspect minhash_allele_calling.wdl."""
-        # This workflow exists in the codebase
-        workflow_path = "torchbase/workflows/minhash_allele_calling.wdl"
+    def test_inspect_fast_typing_workflow(self):
+        """Should successfully inspect fast_typing.wdl."""
+        workflow_path = "torchbase/workflows/builtin/fast_typing.wdl"
 
         runner = CliRunner()
         result = runner.invoke(cli, ['workflow', 'inspect', workflow_path])
 
-        # Should successfully parse and display
-        # May fail if command not implemented yet
         assert result.exit_code == 0 or 'workflow' in result.output.lower()
 
-    def test_inspect_alignment_fallback_workflow(self):
-        """Should successfully inspect alignment_fallback.wdl."""
-        workflow_path = "torchbase/workflows/alignment_fallback.wdl"
+    def test_inspect_balanced_typing_workflow(self):
+        """Should successfully inspect balanced_typing.wdl."""
+        workflow_path = "torchbase/workflows/builtin/balanced_typing.wdl"
 
         runner = CliRunner()
         result = runner.invoke(cli, ['workflow', 'inspect', workflow_path])
@@ -837,7 +833,6 @@ class TestWorkflowInspectIntegration:
 
     def test_inspect_shows_workflow_specific_tasks(self):
         """Different workflows should show their specific tasks."""
-        # minhash_allele_calling has: sketch_sequences, compare_sketches, call_alleles
-        # alignment_fallback has: refine_with_alignment
-        # (This test documents expected behavior for when feature is implemented)
+        # fast_typing: sketch_sequences, compare_sketches, call_alleles_minhash
+        # balanced_typing: same + conditional alignment branch
         pass

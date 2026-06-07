@@ -23,6 +23,8 @@ from torchbase.torchbase import Profile, Schema
 
 # Get the torchbase root directory
 TORCHBASE_ROOT = Path(__file__).parent.parent
+# Root of the full repo (one level above torchbase package)
+REPO_ROOT = TORCHBASE_ROOT.parent
 
 
 @pytest.fixture
@@ -709,25 +711,24 @@ class TestWorkflowTorchConvention:
             assert torch.workflow is None
 
 
-@pytest.mark.skip(reason="Issue #61: Default workflow torch moved to examples/ and replaced with synthetic examples")
 class TestDefaultWorkflowTorchLocation:
     """Test that default workflow torch exists at well-known location."""
 
     def test_default_workflow_torch_directory_exists(self):
         """Default workflow torch directory exists at torchbase/workflows/mlst/1.0.0.torch/"""
-        torch_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch"
+        torch_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch"
         assert torch_path.exists(), f"Workflow torch not found at {torch_path}"
         assert torch_path.is_dir(), f"Workflow torch is not a directory: {torch_path}"
 
     def test_default_workflow_torch_metadata_exists(self):
         """Default workflow torch has metadata.toml"""
-        metadata_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch" / "metadata.toml"
+        metadata_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch" / "metadata.toml"
         assert metadata_path.exists(), f"metadata.toml not found at {metadata_path}"
         assert metadata_path.is_file(), f"metadata.toml is not a file: {metadata_path}"
 
     def test_default_workflow_torch_metadata_valid(self):
         """Default workflow torch metadata.toml is valid TOML"""
-        metadata_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch" / "metadata.toml"
+        metadata_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch" / "metadata.toml"
         with open(metadata_path) as f:
             metadata = toml.load(f)
 
@@ -736,7 +737,7 @@ class TestDefaultWorkflowTorchLocation:
 
     def test_default_workflow_torch_typing_method(self):
         """Default workflow torch declares typing.method = mlst"""
-        metadata_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch" / "metadata.toml"
+        metadata_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch" / "metadata.toml"
         with open(metadata_path) as f:
             metadata = toml.load(f)
 
@@ -745,31 +746,31 @@ class TestDefaultWorkflowTorchLocation:
 
     def test_default_workflow_torch_main_wdl_exists(self):
         """Default workflow torch has main.wdl"""
-        wdl_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch" / "main.wdl"
+        wdl_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch" / "main.wdl"
         assert wdl_path.exists(), f"main.wdl not found at {wdl_path}"
         assert wdl_path.is_file(), f"main.wdl is not a file: {wdl_path}"
 
     def test_default_workflow_torch_profiles_exists(self):
         """Default workflow torch has profiles.tsv"""
-        profiles_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch" / "profiles.tsv"
+        profiles_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch" / "profiles.tsv"
         assert profiles_path.exists(), f"profiles.tsv not found at {profiles_path}"
         assert profiles_path.is_file(), f"profiles.tsv is not a file: {profiles_path}"
 
     def test_default_workflow_torch_quality_json_exists(self):
         """Default workflow torch has quality.json"""
-        quality_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch" / "quality.json"
+        quality_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch" / "quality.json"
         assert quality_path.exists(), f"quality.json not found at {quality_path}"
         assert quality_path.is_file(), f"quality.json is not a file: {quality_path}"
 
     def test_default_workflow_torch_resources_directory_exists(self):
         """Default workflow torch has _resources directory"""
-        resources_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch" / "_resources"
+        resources_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch" / "_resources"
         assert resources_path.exists(), f"_resources not found at {resources_path}"
         assert resources_path.is_dir(), f"_resources is not a directory: {resources_path}"
 
     def test_default_workflow_torch_can_be_loaded(self):
         """Default workflow torch can be loaded by Torch.load()"""
-        torch_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch"
+        torch_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch"
         torch = Torch.load(torch_path)
 
         assert torch is not None
@@ -777,7 +778,7 @@ class TestDefaultWorkflowTorchLocation:
 
     def test_default_workflow_torch_has_workflow_attribute(self):
         """Default workflow torch loads with workflow attribute"""
-        torch_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch"
+        torch_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch"
         torch = Torch.load(torch_path)
 
         assert hasattr(torch, "workflow")
@@ -785,14 +786,14 @@ class TestDefaultWorkflowTorchLocation:
 
     def test_default_workflow_torch_workflow_points_to_main_wdl(self):
         """Default workflow torch workflow attribute points to main.wdl"""
-        torch_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch"
+        torch_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch"
         torch = Torch.load(torch_path)
 
         assert torch.workflow.name == "main.wdl"
 
     def test_default_workflow_torch_has_profiles(self):
         """Default workflow torch has profiles"""
-        torch_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch"
+        torch_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch"
         torch = Torch.load(torch_path)
 
         assert hasattr(torch, "profile")
@@ -800,7 +801,7 @@ class TestDefaultWorkflowTorchLocation:
 
     def test_default_workflow_torch_profiles_contain_mlst_loci(self):
         """Default workflow torch profiles contain standard MLST loci"""
-        torch_path = TORCHBASE_ROOT / "workflows" / "mlst" / "1.0.0.torch"
+        torch_path = REPO_ROOT / "examples" / "simple_mlst" / "1.0.0.torch"
         torch = Torch.load(torch_path)
 
         # Should have some profiles

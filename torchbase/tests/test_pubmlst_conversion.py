@@ -497,10 +497,32 @@ ATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGATGAT
             assert True  # Placeholder for actual k-mer analysis test
 
     def test_respects_kmer_size_parameter(self):
-        """K-mer analysis should respect --kmer-size parameter."""
-        # Default should be 13, but should be overridable
-        # Tests that the parameter is passed through to analysis
-        assert True  # Placeholder
+        """analyze_locus uses kmer_size; smaller k gives higher similarity for one-SNP sequences."""
+        from torchbase.quality.kmer_analysis import analyze_locus
+
+        # Two 100bp sequences differing at exactly one position (pos 50).
+        # Smaller k-mers are less affected by a single SNP than larger ones,
+        # so k=4 should yield higher Jaccard similarity than k=21.
+        base = "ATGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAG"
+        snp = base[:50] + "C" + base[51:]  # flip one base
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fasta = Path(tmpdir) / "adk.fasta"
+            fasta.write_text(f">adk_1\n{base}\n>adk_2\n{snp}\n")
+
+            report_small = analyze_locus(fasta, k_size=4)
+            report_large = analyze_locus(fasta, k_size=21)
+
+            assert len(report_small.similarities) == 1
+            assert len(report_large.similarities) == 1
+
+            sim_small = list(report_small.similarities.values())[0]
+            sim_large = list(report_large.similarities.values())[0]
+
+            # Smaller k → fewer affected k-mers → higher Jaccard for a one-SNP diff
+            assert sim_small > sim_large, (
+                f"Expected k=4 similarity ({sim_small:.1f}%) > k=21 ({sim_large:.1f}%)"
+            )
 
     def test_respects_overlap_threshold_parameter(self):
         """K-mer analysis should respect --overlap-threshold parameter."""
@@ -518,75 +540,72 @@ class TestTorchLoadability:
 
     def test_resulting_torch_is_loadable(self):
         """Resulting torch should be loadable via Torch.load()."""
-        # This uses fixtures from conftest to create a valid torch structure
-        # Then attempts to load it
+        from torchbase.torchfs import Torch
+
         with tempfile.TemporaryDirectory() as tmpdir:
             torch_path = Path(tmpdir) / "test_ns" / "test_torch" / "1.0.0.torch"
-            torch_path.mkdir(parents=True)
+            # Use multi-scheme format (schemes/ directory)
+            scheme_dir = torch_path / "schemes" / "test_scheme"
+            alleles_dir = scheme_dir / "alleles"
+            alleles_dir.mkdir(parents=True)
 
-            # Create minimal valid torch structure
             metadata = {
                 "namespace": "test_ns",
                 "name": "test_torch",
                 "version": "1.0.0",
             }
-
             with open(torch_path / "metadata.toml", 'w') as f:
                 toml.dump(metadata, f)
 
-            # Create minimal profiles and resources
-            profiles_path = torch_path / "test.profiles.tsv"
-            with open(profiles_path, 'w') as f:
-                f.write("ST\tadk\n1\t1\n")
+            (scheme_dir / "profiles.tsv").write_text("ST\tadk\n1\t1\n")
+            (alleles_dir / "adk.fasta").write_text(">adk_1\nACGT\n")
 
-            resources_dir = torch_path / "_resources"
-            resources_dir.mkdir()
-
-            # Should be loadable
-            # This is a placeholder - actual test would use Torch.load()
-            assert True
+            result = Torch.load(torch_path)
+            assert result is not None
+            assert result.path == torch_path
 
     def test_torch_load_validates_metadata(self):
-        """Torch.load() should validate metadata.toml."""
+        """Torch.load() should raise ValueError on metadata mismatch."""
+        from torchbase.torchfs import Torch
+
         with tempfile.TemporaryDirectory() as tmpdir:
             torch_path = Path(tmpdir) / "test_ns" / "test_torch" / "1.0.0.torch"
             torch_path.mkdir(parents=True)
 
-            # Invalid metadata (missing required fields)
-            metadata = {"name": "test_torch"}
-
+            # namespace in metadata does not match path
+            metadata = {"namespace": "wrong_ns", "name": "test_torch", "version": "1.0.0"}
             with open(torch_path / "metadata.toml", 'w') as f:
                 toml.dump(metadata, f)
 
-            # Torch.load() should reject invalid metadata
-            # This is a placeholder test
-            assert True
+            with pytest.raises(ValueError, match="[Nn]amespace"):
+                Torch.load(torch_path)
 
     def test_torch_load_scans_resources_directory(self):
-        """Torch.load() should scan _resources/ for allele files."""
+        """Torch.load() should discover allele files in _resources/."""
+        from torchbase.torchfs import Torch
+
         with tempfile.TemporaryDirectory() as tmpdir:
             torch_path = Path(tmpdir) / "test_ns" / "test_torch" / "1.0.0.torch"
             torch_path.mkdir(parents=True)
 
-            # Create metadata and resources
             metadata = {
                 "namespace": "test_ns",
                 "name": "test_torch",
                 "version": "1.0.0",
+                "manifest": {"profiles": "profiles.tsv"},
             }
-
             with open(torch_path / "metadata.toml", 'w') as f:
                 toml.dump(metadata, f)
 
+            (torch_path / "profiles.tsv").write_text("ST\tadk\n1\t1\n")
+
             resources_dir = torch_path / "_resources"
             resources_dir.mkdir()
+            (resources_dir / "adk.fasta").write_text(">adk_1\nACGT\n")
+            (resources_dir / "fumC.fasta").write_text(">fumC_1\nTTGG\n")
 
-            # Create allele files
-            with open(resources_dir / "adk.fasta", 'w') as f:
-                f.write(">adk_1\nACGT\n")
-
-            # Torch should discover these files
-            assert True
+            result = Torch.load(torch_path)
+            assert len(result.references) == 2
 
 
 class TestEndToEnd:

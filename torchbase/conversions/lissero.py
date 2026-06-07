@@ -1,14 +1,17 @@
-"""ShigaTyper converter — local FASTA files to torch format.
+"""LisSero converter — local database files to torch format.
 
-ShigaTyper identifies Shigella serotypes by typing wzx/wzy (O-antigen)
-and fliC (H-antigen) loci.
+LisSero serotypes Listeria monocytogenes based on the presence or absence of
+eight PCR-target loci: prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh, lin0764,
+lin1118. Serogroup is determined by the binary pattern of detected loci.
 
-If a profiles TSV is provided it is used as-is; otherwise a stub header-only
-table is written so the torch is immediately loadable.
+Expected serogroup table (TSV) columns:
+    Serogroup, prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh, lin0764, lin1118
+Values in each locus column should be 1 (present) or 0 (absent).
 
 Usage:
-    torchtools convert shigatyper wzx.fasta wzy.fasta fliC.fasta
-    torchtools convert shigatyper --profiles serotypes.tsv wzx.fasta wzy.fasta fliC.fasta
+    torchtools convert lissero --profiles serogroups.tsv \\
+        prs.fasta LMOSA.fasta LMOSB.fasta ORF2110.fasta ORF2819.fasta \\
+        ldh.fasta lin0764.fasta lin1118.fasta
 """
 
 import csv
@@ -23,30 +26,36 @@ import toml
 from torchbase.quality.kmer_analysis import analyze_locus
 
 
-TAXA = ["Shigella"]
+TAXA = ["Listeria monocytogenes"]
+
+# Canonical LisSero loci in expected order
+CANONICAL_LOCI = ["prs", "LMOSA", "LMOSB", "ORF2110", "ORF2819", "ldh", "lin0764", "lin1118"]
 
 
 def convert_local(
     sequence_files: List[IO],
     profiles_file: Optional[IO] = None,
     output_path: str = ".",
-    namespace: str = "shigatyper",
-    name: str = "shigatyper",
+    namespace: str = "lissero",
+    name: str = "lissero",
     version: str = "1.0.0",
     kmer_size: int = 13,
     overlap_threshold: float = 0.90,
     duplicate_threshold: float = 0.95,
 ) -> str:
-    """Convert local ShigaTyper FASTA files to torch format.
+    """Convert local LisSero database files to torch format.
 
     Args:
-        sequence_files: Open file handles for antigen gene FASTA files.
-        profiles_file: Optional open file handle for serotype profiles TSV.
-            Columns: Serotype, O, H (at minimum). If absent, a stub
-            header-only table is written so the torch is loadable.
+        sequence_files: Open file handles for per-locus FASTA files.
+            Canonical loci: prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh,
+            lin0764, lin1118. Filenames should match locus names.
+        profiles_file: Open file handle for serogroup definitions TSV.
+            Columns: Serogroup, prs, LMOSA, LMOSB, ORF2110, ORF2819,
+            ldh, lin0764, lin1118 (binary 1/0 per locus). If absent, a
+            stub header-only table is written so the torch is loadable.
         output_path: Directory in which to create the torch.
-        namespace: Torch namespace (default: "shigatyper").
-        name: Torch name (default: "shigatyper").
+        namespace: Torch namespace (default: "lissero").
+        name: Torch name (default: "lissero").
         version: Torch version string.
         kmer_size: K-mer size for quality analysis.
         overlap_threshold: Overlap similarity threshold.
@@ -76,7 +85,7 @@ def convert_local(
         rows = list(csv.reader(profiles_file, delimiter="\t"))
         profile_count = max(0, len(rows) - 1)
     else:
-        _write_stub_profiles(profiles_dest, locus_names)
+        _write_stub_profiles(profiles_dest, locus_names or CANONICAL_LOCI)
         profile_count = 0
 
     quality_results = _run_quality_analysis(
@@ -91,13 +100,17 @@ def convert_local(
         "version_info": {"strategy": "snapshot", "timestamp": now},
         "typing": {
             "method": "serotyping",
-            "scheme": "Shigella O:H antigen",
+            "scheme": "LisSero PCR-target serogroup",
             "loci_count": len(locus_names),
             "profiles_count": profile_count,
         },
         "description": {
-            "short": "ShigaTyper Shigella serotyping torch",
-            "long": "Shigella serotyping based on wzx/wzy O-antigen and fliC H-antigen loci",
+            "short": "LisSero Listeria monocytogenes serogroup torch",
+            "long": (
+                "Listeria monocytogenes serogroup determination by "
+                "presence/absence of eight PCR-target loci: "
+                + ", ".join(CANONICAL_LOCI)
+            ),
             "taxa": TAXA,
         },
         "data_quality": {
@@ -125,7 +138,7 @@ def convert_local(
 
 def _write_stub_profiles(profiles_path: Path, locus_names: List[str]) -> None:
     with open(profiles_path, "w", newline="") as f:
-        csv.writer(f, delimiter="\t").writerow(["Serotype", "O", "H"])
+        csv.writer(f, delimiter="\t").writerow(["Serogroup"] + locus_names)
 
 
 def _build_quality_report(locus_names, quality_results, kmer_size, overlap_threshold):
