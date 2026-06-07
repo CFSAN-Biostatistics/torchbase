@@ -847,10 +847,11 @@ def _pubmlst_legacy(scheme, sequences=[]):
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--namespace", default="pubcgmlst", show_default=True)
 @click.option("--name", default=None, help="Torch name (default: scheme filename stem)")
+@click.option("--version", default="1.0.0", show_default=True, help="Torch version")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _pubcgmlst(scheme, sequences, output, namespace, name, kmer_size, overlap_threshold, duplicate_threshold):
+def _pubcgmlst(scheme, sequences, output, namespace, name, version, kmer_size, overlap_threshold, duplicate_threshold):
     "Create a torch from a PubMLST cgMLST database and schema."
     from torchbase.conversions.pubcgmlst import convert_local
 
@@ -861,6 +862,7 @@ def _pubcgmlst(scheme, sequences, output, namespace, name, kmer_size, overlap_th
             output_path=output,
             namespace=namespace,
             name=name,
+            version=version,
             kmer_size=kmer_size,
             overlap_threshold=overlap_threshold,
             duplicate_threshold=duplicate_threshold,
@@ -875,10 +877,11 @@ def _pubcgmlst(scheme, sequences, output, namespace, name, kmer_size, overlap_th
 @click.option("--download", is_flag=True, default=False, help="Download FASTA files from CDCgov/SeqSero2")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="seqsero2", show_default=True, help="Torch name")
+@click.option("--version", default="1.0.0", show_default=True, help="Torch version")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _seqsero2(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
+def _seqsero2(sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from SeqSero2 Salmonella serotyping database files."
     import tempfile
     from torchbase.conversions.seqsero2 import convert_local, DOWNLOAD_SOURCES
@@ -898,6 +901,7 @@ def _seqsero2(sequences, profiles, output, name, kmer_size, overlap_threshold, d
             profiles_file=profiles,
             output_path=output,
             name=name,
+            version=version,
             kmer_size=kmer_size,
             overlap_threshold=overlap_threshold,
             duplicate_threshold=duplicate_threshold,
@@ -920,11 +924,12 @@ def _seqsero2(sequences, profiles, output, name, kmer_size, overlap_threshold, d
               help="Download antigen DB, MLST locus FASTAs, and MLST profiles from LSTUGA/SeqSero2S")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="seqsero2s", show_default=True, help="Torch name")
+@click.option("--version", default="1.0.0", show_default=True, help="Torch version")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
 def _seqsero2s(sequences, antigen_db, mlst_profiles, serotype_profiles,
-               output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
+               output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from SeqSero2S (LSTUGA) Salmonella serotyping + MLST database files."
     import tempfile
     from torchbase.conversions.seqsero2s import convert_local, DOWNLOAD_SOURCES
@@ -950,6 +955,7 @@ def _seqsero2s(sequences, antigen_db, mlst_profiles, serotype_profiles,
             serotype_profiles=serotype_profiles,
             output_path=output,
             name=name,
+            version=version,
             kmer_size=kmer_size,
             overlap_threshold=overlap_threshold,
             duplicate_threshold=duplicate_threshold,
@@ -968,10 +974,11 @@ def _seqsero2s(sequences, antigen_db, mlst_profiles, serotype_profiles,
               help="Download ECTyperDB.fasta and allele profiles from phac-nml/ectyper")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="ectyper", show_default=True, help="Torch name")
+@click.option("--version", default="1.0.0", show_default=True, help="Torch version")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _ectyper(sequences, profiles, db_fasta, output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
+def _ectyper(sequences, profiles, db_fasta, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from ECTyper E. coli / Shigella serotyping database files."
     import tempfile
     from torchbase.conversions.ectyper import convert_local, DOWNLOAD_SOURCES
@@ -996,6 +1003,7 @@ def _ectyper(sequences, profiles, db_fasta, output, name, kmer_size, overlap_thr
             db_fasta=db_fasta,
             output_path=output,
             name=name,
+            version=version,
             kmer_size=kmer_size,
             overlap_threshold=overlap_threshold,
             duplicate_threshold=duplicate_threshold,
@@ -1013,10 +1021,11 @@ def _ectyper(sequences, profiles, db_fasta, output, name, kmer_size, overlap_thr
               help="Download locus FASTAs and serogroup profiles from MDU-PHL/LisSero")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="lissero", show_default=True, help="Torch name")
+@click.option("--version", default="1.0.0", show_default=True, help="Torch version")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _lissero(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
+def _lissero(sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from LisSero Listeria monocytogenes serogroup database files."
     import tempfile
     from torchbase.conversions.lissero import convert_local, DOWNLOAD_SOURCES
@@ -1038,6 +1047,7 @@ def _lissero(sequences, profiles, output, name, kmer_size, overlap_threshold, du
             profiles_file=profiles,
             output_path=output,
             name=name,
+            version=version,
             kmer_size=kmer_size,
             overlap_threshold=overlap_threshold,
             duplicate_threshold=duplicate_threshold,
@@ -1061,10 +1071,11 @@ def _chewie_ns():
               help="Download FASTA files from CFSAN-Biostatistics/ShigaTyper")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="shigatyper", show_default=True, help="Torch name")
+@click.option("--version", default="1.0.0", show_default=True, help="Torch version")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _shigatyper(sequences, profiles, output, name, kmer_size, overlap_threshold, duplicate_threshold, download):
+def _shigatyper(sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from ShigaTyper's database."
     import tempfile
     from torchbase.conversions.shigatyper import convert_local, DOWNLOAD_SOURCES
@@ -1084,6 +1095,7 @@ def _shigatyper(sequences, profiles, output, name, kmer_size, overlap_threshold,
             profiles_file=profiles,
             output_path=output,
             name=name,
+            version=version,
             kmer_size=kmer_size,
             overlap_threshold=overlap_threshold,
             duplicate_threshold=duplicate_threshold,
