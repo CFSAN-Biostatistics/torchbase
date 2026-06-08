@@ -399,6 +399,174 @@ class TestSigningCLI:
 
 
 # ---------------------------------------------------------------------------
+# FileKeySigner — non-Ed25519 key branch
+# ---------------------------------------------------------------------------
+
+class TestFileKeySignerNonEd25519:
+    def test_sign_raises_on_non_ed25519_key(self, tmp_path):
+        """Loading a P-256 PEM and calling sign() should raise TypeError."""
+        from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key, SECP256R1
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding, PrivateFormat, NoEncryption
+        )
+        from torchbase.signing import FileKeySigner
+
+        key = generate_private_key(SECP256R1())
+        pem_path = tmp_path / "p256.key"
+        pem_path.write_bytes(key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()))
+
+        signer = FileKeySigner(pem_path)
+        with pytest.raises(TypeError, match="not Ed25519"):
+            signer.sign(b"hello")
+
+
+# ---------------------------------------------------------------------------
+# verify_torch — no key available path
+# ---------------------------------------------------------------------------
+
+class TestVerifyTorchNoKey:
+    def test_returns_false_when_no_key_and_no_embedded(self, tmp_path):
+        """verify_torch with a signature.toml that has no public_key field."""
+        torch_dir = _make_torch(tmp_path)
+        # Write a signature.toml with no [public_key] section
+        sig_path = torch_dir / "signature.toml"
+        sig_path.write_text(
+            '[signature]\nnamespace = "examples"\nalgorithm = "ed25519"\n'
+            'signed_at = "2026-01-01T00:00:00+00:00"\n'
+            'content_hash = "sha256:aaaa"\nmessage = "x"\nvalue = "AAAA"\n'
+        )
+        result = verify_torch(torch_dir, public_key_b64=None)
+        assert not result.valid
+        assert "No public key" in result.message
+
+
+# ---------------------------------------------------------------------------
+# fetch_key_registry — IPNS path
+# ---------------------------------------------------------------------------
+
+class TestFetchKeyRegistryIpns:
+    def test_fetches_via_ipns(self, tmp_path):
+        registry_toml = '[keys]\nexamples = "ipns_key_abc"\n'
+        cache_path = tmp_path / "key_cache.toml"
+
+        def mock_post(url, params=None, timeout=None):
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            if "name/resolve" in url:
+                resp.json.return_value = {"Path": "/ipfs/QmRegCID"}
+            elif "cat" in url:
+                resp.text = registry_toml
+            return resp
+
+        with patch("torchbase.signing.requests") as mock_req:
+            mock_req.post.side_effect = mock_post
+            keys = fetch_key_registry("/ipns/k51qtest", cache_path, ttl_hours=24)
+
+        assert keys == {"examples": "ipns_key_abc"}
+        assert cache_path.exists()
+
+    def test_fetches_via_ipns_scheme(self, tmp_path):
+        registry_toml = '[keys]\nexamples = "ipns_scheme_key"\n'
+        cache_path = tmp_path / "key_cache.toml"
+
+        def mock_post(url, params=None, timeout=None):
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            if "name/resolve" in url:
+                resp.json.return_value = {"Path": "/ipfs/QmRegCID2"}
+            elif "cat" in url:
+                resp.text = registry_toml
+            return resp
+
+        with patch("torchbase.signing.requests") as mock_req:
+            mock_req.post.side_effect = mock_post
+            keys = fetch_key_registry("ipns://k51qtest2", cache_path, ttl_hours=24)
+
+        assert keys == {"examples": "ipns_scheme_key"}
+
+
+# ---------------------------------------------------------------------------
+# resolve_public_key — failing registry falls through
+# ---------------------------------------------------------------------------
+
+class TestResolvePublicKeyFallthrough:
+    def test_failing_registry_falls_through_to_trusted_keys(self, tmp_path):
+        from torchbase.config import RegistryConfig
+        cache_path = tmp_path / "key_cache.toml"
+
+        def failing_fetch(*args, **kwargs):
+            raise Exception("network error")
+
+        config = RegistryConfig(
+            key_registries=["https://example.com/keys.toml"],
+            trusted_keys={"myns": "fallback_key"},
+        )
+
+        with patch("torchbase.signing.fetch_key_registry", side_effect=failing_fetch):
+            result = resolve_public_key("myns", config)
+
+        assert result == ("fallback_key", "ed25519")
+
+    def test_registry_hit_returns_without_checking_trusted_keys(self, tmp_path):
+        from torchbase.config import RegistryConfig
+
+        def mock_fetch(url, cache_path, ttl):
+            return {"myns": "registry_key"}
+
+        config = RegistryConfig(
+            key_registries=["https://example.com/keys.toml"],
+            trusted_keys={"myns": "trusted_key"},
+        )
+
+        with patch("torchbase.signing.fetch_key_registry", side_effect=mock_fetch):
+            result = resolve_public_key("myns", config)
+
+        assert result == ("registry_key", "ed25519")
+
+
+# ---------------------------------------------------------------------------
+# _verify_signature — p256 branch
+# ---------------------------------------------------------------------------
+
+class TestVerifySignatureP256:
+    def test_p256_sign_and_verify(self):
+        from cryptography.hazmat.primitives.asymmetric.ec import (
+            generate_private_key, SECP256R1, ECDSA
+        )
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        from torchbase.signing import _b64u, _b64u_decode, _verify_signature
+
+        key = generate_private_key(SECP256R1())
+        message = b"test message for p256"
+        sig = key.sign(message, ECDSA(hashes.SHA256()))
+        pub_raw = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+
+        # Should not raise
+        _verify_signature(message, sig, pub_raw, "p256")
+
+    def test_p256_bad_signature_raises(self):
+        from cryptography.hazmat.primitives.asymmetric.ec import (
+            generate_private_key, SECP256R1, ECDSA
+        )
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+        from torchbase.signing import _verify_signature
+
+        key = generate_private_key(SECP256R1())
+        pub_raw = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+        bad_sig = b"\x00" * 64
+
+        with pytest.raises(Exception):
+            _verify_signature(b"message", bad_sig, pub_raw, "p256")
+
+    def test_unknown_algorithm_raises(self):
+        from torchbase.signing import _verify_signature
+        with pytest.raises(ValueError, match="Unknown algorithm"):
+            _verify_signature(b"msg", b"sig", b"key", "rsa")
+
+
+# ---------------------------------------------------------------------------
 # YubiKey — skipped when ykman unavailable
 # ---------------------------------------------------------------------------
 
