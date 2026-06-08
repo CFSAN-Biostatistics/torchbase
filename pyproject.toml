@@ -70,5 +70,6 @@ packages = ["torchbase"]
 [tool.pytest.ini_options]
 markers = [
     "miniwdl: tests requiring miniwdl and Docker (skipped unless CI=true)",
+    "hardware: tests requiring physical hardware (YubiKey, etc.) — run with -m hardware",
 ]
-addopts = "-m 'not miniwdl' --tb=short"
+addopts = "-m 'not miniwdl and not hardware' --tb=short"
