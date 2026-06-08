@@ -49,7 +49,7 @@ class TestPubMLSTConverterCLI:
         runner = CliRunner()
 
         # Mock the actual conversion to just test CLI argument parsing
-        with patch('torchbase.conversions.pubmlst.convert_scheme') as mock_convert:
+        with patch('torchbase.conversions.pubmlst.convert_schemes') as mock_convert:
             mock_convert.return_value = "/tmp/output.torch"
 
             # This should not raise an error about missing arguments
@@ -92,7 +92,7 @@ class TestPubMLSTConverterCLI:
         from torchbase.cli import tools
         runner = CliRunner()
 
-        with patch('torchbase.conversions.pubmlst.convert_scheme') as mock_convert:
+        with patch('torchbase.conversions.pubmlst.convert_schemes') as mock_convert:
             mock_convert.return_value = "/tmp/output.torch"
 
             result = runner.invoke(
@@ -111,7 +111,7 @@ class TestPubMLSTConverterCLI:
         from torchbase.cli import tools
         runner = CliRunner()
 
-        with patch('torchbase.conversions.pubmlst.convert_scheme') as mock_convert:
+        with patch('torchbase.conversions.pubmlst.convert_schemes') as mock_convert:
             mock_convert.return_value = "/tmp/output.torch"
 
             result = runner.invoke(
@@ -130,7 +130,7 @@ class TestPubMLSTConverterCLI:
         from torchbase.cli import tools
         runner = CliRunner()
 
-        with patch('torchbase.conversions.pubmlst.convert_scheme') as mock_convert:
+        with patch('torchbase.conversions.pubmlst.convert_schemes') as mock_convert:
             mock_convert.return_value = "/tmp/output.torch"
 
             result = runner.invoke(
@@ -322,7 +322,7 @@ class TestMetadataGeneration:
                 loaded = toml.load(f)
                 assert "source" in loaded["provenance"]
                 assert "database_url" in loaded["provenance"]
-                assert "scheme_id" in loaded["provenance"]
+                assert "scheme_ids" in loaded["provenance"] or "scheme_id" in loaded["provenance"]
 
     def test_metadata_contains_data_quality_section(self):
         """Metadata should contain [data_quality] section."""

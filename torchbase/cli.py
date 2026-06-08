@@ -805,41 +805,87 @@ def _build(torch):
     click.echo(tabulate(rows, headers=["Field", "Value"], tablefmt="simple"))
     click.echo("Torch structure is valid.")
 
-@tools.command("convert-pubmlst")
-@click.option("--url", required=True, help="PubMLST database API URL")
-@click.option("--scheme-id", required=True, type=int, help="Scheme ID number")
-@click.option("--output", required=True, help="Output directory for torch")
-@click.option("--kmer-size", default=13, type=int, help="K-mer size for quality analysis")
-@click.option("--overlap-threshold", default=0.90, type=float, help="Overlap threshold for quality analysis")
-@click.option("--duplicate-threshold", default=0.95, type=float, help="Duplicate threshold for quality analysis")
-def _convert_pubmlst(url, scheme_id, output, kmer_size, overlap_threshold, duplicate_threshold):
-    "Convert a PubMLST scheme to torch format."
-    from torchbase.conversions.pubmlst import convert_scheme
-
-    try:
-        torch_path = convert_scheme(
-            database_url=url,
-            scheme_id=scheme_id,
-            output_path=output,
-            kmer_size=kmer_size,
-            overlap_threshold=overlap_threshold,
-            duplicate_threshold=duplicate_threshold,
-        )
-        click.echo(f"Successfully created torch at: {torch_path}")
-    except Exception as e:
-        raise click.ClickException(f"Conversion failed: {str(e)}")
-
 @tools.group("convert")
 def convert():
     "Various conversion tools to make torches."
     pass
 
 @convert.command("pubmlst")
-@click.argument("scheme", type=click.File())
-@click.argument("sequences", type=click.File(), nargs=-1)
-def _pubmlst_legacy(scheme, sequences=[]):
-    "Create a torch from a PubMLST database and schema (legacy)."
-    pass
+@click.option("--url", required=True, help="PubMLST database API URL")
+@click.option("--scheme-id", multiple=True, type=int,
+              help="Scheme ID to include; repeat for multi-scheme torches. "
+                   "Mutually exclusive with --all.")
+@click.option("--all", "fetch_all", is_flag=True, default=False,
+              help="Fetch every scheme from every database and produce one "
+                   "'pubmlst' torch.  Mutually exclusive with --scheme-id.")
+@click.option("--output", required=True, help="Output directory for torch")
+@click.option("--name", default=None,
+              help="Torch name (default: derived from first scheme, or 'pubmlst' with --all)")
+@click.option("--namespace", default="pubmlst", show_default=True, help="Torch namespace")
+@click.option("--cutoff-date", default="2024-12-31", show_default=True,
+              help="Exclude alleles entered after this date (YYYY-MM-DD). "
+                   "Defaults to 2024-12-31, the last day of freely-redistributable "
+                   "PubMLST data before the 2025 licensing change.")
+@click.option("--no-skip-errors", is_flag=True, default=False,
+              help="With --all: abort on the first scheme that fails instead of skipping it.")
+@click.option("--kmer-size", default=13, type=int, help="K-mer size for quality analysis")
+@click.option("--overlap-threshold", default=0.90, type=float, help="Overlap threshold for quality analysis")
+@click.option("--duplicate-threshold", default=0.95, type=float, help="Duplicate threshold for quality analysis")
+def _convert_pubmlst(url, scheme_id, fetch_all, output, name, namespace, cutoff_date,
+                     no_skip_errors, kmer_size, overlap_threshold, duplicate_threshold):
+    """Convert PubMLST schemes into a multi-scheme torch.
+
+    Pass --scheme-id multiple times to bundle specific schemes (e.g., MLST and
+    cgMLST for one organism) into a single torch.
+
+    Pass --all to enumerate every scheme across every PubMLST database and
+    produce a single "pubmlst" torch containing all of them.
+
+    The default cutoff date (2024-12-31) restricts alleles to those with
+    freely-redistributable terms, matching the dataset snapshot bundled in
+    tseemann/mlst v2.33.0.
+    """
+    from datetime import date as _date
+    from torchbase.conversions.pubmlst import convert_schemes, convert_all
+
+    if fetch_all and scheme_id:
+        raise click.UsageError("--all and --scheme-id are mutually exclusive")
+    if not fetch_all and not scheme_id:
+        raise click.UsageError("Specify at least one --scheme-id or use --all")
+
+    try:
+        cutoff = _date.fromisoformat(cutoff_date)
+    except ValueError:
+        raise click.ClickException(f"Invalid cutoff-date '{cutoff_date}': expected YYYY-MM-DD")
+
+    try:
+        if fetch_all:
+            torch_path = convert_all(
+                base_url=url,
+                output_path=output,
+                namespace=namespace,
+                torch_name=name or "pubmlst",
+                kmer_size=kmer_size,
+                overlap_threshold=overlap_threshold,
+                duplicate_threshold=duplicate_threshold,
+                cutoff_date=cutoff,
+                skip_errors=not no_skip_errors,
+            )
+        else:
+            torch_path = convert_schemes(
+                database_url=url,
+                scheme_ids=list(scheme_id),
+                output_path=output,
+                namespace=namespace,
+                torch_name=name,
+                kmer_size=kmer_size,
+                overlap_threshold=overlap_threshold,
+                duplicate_threshold=duplicate_threshold,
+                cutoff_date=cutoff,
+            )
+        click.echo(f"Successfully created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
 
 @convert.command("pubcgmlst")
 @click.argument("scheme", type=click.File())

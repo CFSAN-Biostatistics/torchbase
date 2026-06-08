@@ -1,23 +1,196 @@
 """PubMLST Converter module for converting PubMLST schemes to torch format.
 
-This module provides the convert_scheme() function that:
-1. Fetches scheme data from a BIGSdb database using the BIGSdbClient
-2. Creates a torch directory structure
-3. Extracts alleles and profiles
-4. Runs k-mer quality analysis
-5. Generates metadata.toml and quality.json
+PubMLST changed their data licensing on 2025-01-01: allele sequences submitted
+from that date onward require authentication and carry a non-commercial-only
+license.  Alleles entered on or before 2024-12-31 remain freely accessible and
+redistributable.  The default cutoff_date here reflects that boundary.
+
+This module can build single-scheme or multi-scheme torches.  Pass a list of
+scheme_ids to bundle multiple schemes (e.g., MLST + wgMLST for one organism)
+into a single torch under the multi-scheme format.
+
+Version string used: YYYY.MM.DD derived from the cutoff date, making the data
+snapshot explicit (e.g., 2024.12.31 for the last freely-licensed snapshot,
+matching tseemann/mlst v2.33.0).
 """
 
 import json
-import tempfile
-from datetime import datetime, timezone
+import re
+import tempfile  # noqa: F401  kept for future use
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Sequence
 import csv
 import toml
 
-from torchbase.conversions.bigsdb_client import BIGSdbClient
-from torchbase.quality.kmer_analysis import analyze_locus
+from torchbase.conversions.bigsdb_client import BIGSdbClient, SchemeData, DatabaseInfo
+
+# PubMLST changed licensing for data submitted from this date onward.
+PUBMLST_LICENSE_CUTOFF = date(2024, 12, 31)
+
+
+def convert_all(
+    base_url: str,
+    output_path: str,
+    namespace: str = "pubmlst",
+    torch_name: str = "pubmlst",
+    kmer_size: int = 13,
+    overlap_threshold: float = 0.90,
+    duplicate_threshold: float = 0.95,
+    cutoff_date: date = PUBMLST_LICENSE_CUTOFF,
+    skip_errors: bool = True,
+) -> str:
+    """Convert every scheme in every PubMLST database into one multi-scheme torch.
+
+    Enumerates all seqdef databases exposed by the API, then all schemes within
+    each database, and writes them all into a single torch under the multi-scheme
+    format.  Each scheme becomes one entry under schemes/ named
+    {database}_{scheme_key} to avoid collisions across organisms.
+
+    Args:
+        base_url: PubMLST/BIGSdb REST API root (e.g., https://pubmlst.org/api)
+        output_path: Directory where the torch tree will be written
+        namespace: Torch namespace (default: "pubmlst")
+        torch_name: Torch name (default: "pubmlst")
+        kmer_size: K-mer size for quality analysis
+        overlap_threshold: Overlap threshold for quality analysis
+        duplicate_threshold: Duplicate threshold for quality analysis
+        cutoff_date: Exclude alleles entered after this date
+        skip_errors: If True, log failures per scheme and continue rather than
+            aborting the whole run
+
+    Returns:
+        Path to the created torch directory
+
+    Raises:
+        BIGSdbError: If the database list cannot be fetched (always fatal)
+    """
+    import sys
+
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    client = BIGSdbClient(base_url)
+    torch_version = cutoff_date.strftime("%Y.%-m.%-d")
+
+    torch_dir = output_path / namespace / torch_name / f"{torch_version}.torch"
+    torch_dir.mkdir(parents=True, exist_ok=True)
+    schemes_dir = torch_dir / "schemes"
+    schemes_dir.mkdir(exist_ok=True)
+
+    databases = client.list_databases()
+
+    all_quality_results: Dict[str, Any] = {
+        "total_loci": 0,
+        "similar_pairs": [],
+        "duplicate_pairs": [],
+        "loci_results": {},
+    }
+    scheme_registry: Dict[str, Dict[str, Any]] = {}
+    all_scheme_data: List[SchemeData] = []
+    fetch_timestamp = datetime.now(timezone.utc).isoformat()
+    provenance_entries: List[Dict[str, Any]] = []
+
+    for db_info in databases:
+        database = db_info.name
+        try:
+            scheme_list = client.list_schemes(database)
+        except Exception as exc:
+            if skip_errors:
+                print(f"[warn] skipping database {database}: {exc}", file=sys.stderr)
+                continue
+            raise
+
+        for scheme_info in scheme_list:
+            try:
+                scheme_data = client.fetch_scheme(
+                    database, scheme_info.scheme_id, cutoff_date=cutoff_date
+                )
+            except Exception as exc:
+                if skip_errors:
+                    print(
+                        f"[warn] skipping {database}/scheme {scheme_info.scheme_id}: {exc}",
+                        file=sys.stderr,
+                    )
+                    continue
+                raise
+
+            # Prefix with database name to avoid collisions across organisms.
+            # Strip the common "pubmlst_" prefix and "_seqdef" suffix for readability.
+            db_short = re.sub(r"^pubmlst_|_seqdef$", "", database)
+            scheme_key = f"{db_short}_{_sanitize_name(scheme_data.metadata.name)}"
+
+            organism_dir = schemes_dir / scheme_key
+            organism_dir.mkdir(exist_ok=True)
+            alleles_dir = organism_dir / "alleles"
+            alleles_dir.mkdir(exist_ok=True)
+
+            for locus in scheme_data.loci:
+                fasta_text = client._fetch_alleles_fasta(
+                    database, locus.locus_id, cutoff_date=cutoff_date
+                )
+                (alleles_dir / f"{locus.locus_id}.fasta").write_text(fasta_text)
+
+            _write_profiles_tsv(
+                organism_dir / "profiles.tsv", scheme_data.profiles.profiles
+            )
+
+            q = _run_quality_analysis(
+                alleles_dir,
+                kmer_size=kmer_size,
+                overlap_threshold=overlap_threshold,
+                duplicate_threshold=duplicate_threshold,
+            )
+            all_quality_results["total_loci"] += q["total_loci"]
+            all_quality_results["similar_pairs"].extend(q["similar_pairs"])
+            all_quality_results["duplicate_pairs"].extend(q["duplicate_pairs"])
+            all_quality_results["loci_results"].update(
+                {f"{scheme_key}/{k}": v for k, v in q["loci_results"].items()}
+            )
+
+            scheme_registry[scheme_key] = {
+                "organism": scheme_data.metadata.name,
+                "database": database,
+                "loci": [locus.locus_id for locus in scheme_data.loci],
+            }
+            all_scheme_data.append(scheme_data)
+            provenance_entries.append(
+                {"database": database, "scheme_id": scheme_info.scheme_id}
+            )
+
+    metadata = _generate_metadata(
+        namespace=namespace,
+        name=torch_name,
+        version=torch_version,
+        schemes=all_scheme_data,
+        database_url=base_url,
+        scheme_ids=[e["scheme_id"] for e in provenance_entries],
+        scheme_registry=scheme_registry,
+        fetch_timestamp=fetch_timestamp,
+        kmer_size=kmer_size,
+        overlap_threshold=overlap_threshold,
+        duplicate_threshold=duplicate_threshold,
+        quality_results=all_quality_results,
+        cutoff_date=cutoff_date,
+    )
+    # Also record the per-database breakdown in provenance
+    metadata["provenance"]["databases"] = provenance_entries
+
+    metadata_path = torch_dir / "metadata.toml"
+    with open(metadata_path, "w") as f:
+        toml.dump(metadata, f)
+
+    quality_report = _generate_quality_report(
+        kmer_size=kmer_size,
+        overlap_threshold=overlap_threshold,
+        duplicate_threshold=duplicate_threshold,
+        quality_results=all_quality_results,
+    )
+    quality_path = torch_dir / "quality.json"
+    with open(quality_path, "w") as f:
+        json.dump(quality_report, f, indent=2)
+
+    return str(torch_dir)
 
 
 def convert_scheme(
@@ -28,106 +201,163 @@ def convert_scheme(
     kmer_size: int = 13,
     overlap_threshold: float = 0.90,
     duplicate_threshold: float = 0.95,
+    cutoff_date: date = PUBMLST_LICENSE_CUTOFF,
 ) -> str:
-    """Convert a PubMLST scheme to torch format.
+    """Convert a single PubMLST scheme to torch format.
+
+    Convenience wrapper around convert_schemes() for the common case of a
+    single scheme ID.
+    """
+    return convert_schemes(
+        database_url=database_url,
+        scheme_ids=[scheme_id],
+        output_path=output_path,
+        namespace=namespace,
+        kmer_size=kmer_size,
+        overlap_threshold=overlap_threshold,
+        duplicate_threshold=duplicate_threshold,
+        cutoff_date=cutoff_date,
+    )
+
+
+def convert_schemes(
+    database_url: str,
+    scheme_ids: Sequence[int],
+    output_path: str,
+    namespace: str = "pubmlst",
+    torch_name: Optional[str] = None,
+    kmer_size: int = 13,
+    overlap_threshold: float = 0.90,
+    duplicate_threshold: float = 0.95,
+    cutoff_date: date = PUBMLST_LICENSE_CUTOFF,
+) -> str:
+    """Convert one or more PubMLST schemes into a multi-scheme torch.
+
+    Each scheme_id becomes one subdirectory under schemes/ in the resulting
+    torch.  When a single scheme_id is given the result is a valid single-entry
+    multi-scheme torch (compatible with both single- and multi-scheme loaders).
 
     Args:
-        database_url: Base URL of PubMLST database API
-        scheme_id: Numeric ID of the scheme to convert
-        output_path: Output directory path where torch will be created
+        database_url: Base URL of the PubMLST/BIGSdb REST API
+        scheme_ids: One or more numeric scheme IDs to include
+        output_path: Output directory where the torch tree will be written
         namespace: Namespace for the torch (default: "pubmlst")
-        kmer_size: K-mer size for quality analysis (default: 13)
-        overlap_threshold: Overlap threshold for quality analysis (default: 0.90)
-        duplicate_threshold: Duplicate threshold for quality analysis (default: 0.95)
+        torch_name: Override the torch name; defaults to the name of the first
+            scheme (sanitized)
+        kmer_size: K-mer size for quality analysis
+        overlap_threshold: Overlap threshold for quality analysis
+        duplicate_threshold: Duplicate threshold for quality analysis
+        cutoff_date: Exclude alleles entered after this date.  Defaults to
+            2024-12-31, the last day of freely-redistributable PubMLST data.
 
     Returns:
         Path to the created torch directory
 
     Raises:
+        ValueError: If scheme_ids is empty
         Exception: If scheme fetch or conversion fails
     """
+    if not scheme_ids:
+        raise ValueError("At least one scheme_id must be provided")
+
     output_path = Path(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Fetch scheme data from BIGSdb
     client = BIGSdbClient(database_url)
-
-    # Extract database name from URL
-    # e.g., "http://pubmlst.org/api" -> "pubmlst"
     database_name = _extract_database_name(database_url)
 
-    # Fetch scheme data
-    scheme_data = client.fetch_scheme(database_name, scheme_id)
+    # Version is derived from the cutoff date to make the data snapshot explicit.
+    # e.g. cutoff_date=2024-12-31 → version "2024.12.31"
+    torch_version = cutoff_date.strftime("%Y.%-m.%-d")
 
-    # Generate torch name from scheme name
-    torch_name = _sanitize_name(scheme_data.metadata.name)
-    torch_version = "1.0.0"
+    # Fetch all schemes first so we can derive a name before creating dirs.
+    schemes: List[SchemeData] = []
+    for sid in scheme_ids:
+        schemes.append(
+            client.fetch_scheme(database_name, sid, cutoff_date=cutoff_date)
+        )
 
-    # Create torch directory structure
-    # Format: <namespace>/<name>/<version>.torch/
+    derived_name = _sanitize_name(schemes[0].metadata.name)
+    if torch_name is None:
+        torch_name = derived_name
+
     torch_dir = output_path / namespace / torch_name / f"{torch_version}.torch"
     torch_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create schemes subdirectory
     schemes_dir = torch_dir / "schemes"
     schemes_dir.mkdir(exist_ok=True)
 
-    # Create organism subdirectory
-    organism_name = _sanitize_name(scheme_data.metadata.name)
-    organism_dir = schemes_dir / organism_name
-    organism_dir.mkdir(exist_ok=True)
+    all_quality_results: Dict[str, Any] = {
+        "total_loci": 0,
+        "similar_pairs": [],
+        "duplicate_pairs": [],
+        "loci_results": {},
+    }
 
-    # Create alleles subdirectory
-    alleles_dir = organism_dir / "alleles"
-    alleles_dir.mkdir(exist_ok=True)
+    scheme_registry: Dict[str, Dict[str, Any]] = {}
+    fetch_timestamp = datetime.now(timezone.utc).isoformat()
 
-    # Extract allele sequences and write FASTA files
-    allele_counts = {}
-    for locus in scheme_data.loci:
-        fasta_path = alleles_dir / f"{locus.locus_id}.fasta"
-        allele_counts[locus.locus_id] = locus.alleles_count
-        fasta_text = client._fetch_alleles_fasta(database_name, locus.locus_id)
-        fasta_path.write_text(fasta_text)
+    for scheme_data in schemes:
+        scheme_key = _sanitize_name(scheme_data.metadata.name)
+        organism_dir = schemes_dir / scheme_key
+        organism_dir.mkdir(exist_ok=True)
+        alleles_dir = organism_dir / "alleles"
+        alleles_dir.mkdir(exist_ok=True)
 
-    # Write profiles.tsv from scheme data
-    profiles_path = organism_dir / "profiles.tsv"
-    _write_profiles_tsv(profiles_path, scheme_data.profiles.profiles)
+        allele_counts = {}
+        for locus in scheme_data.loci:
+            fasta_text = client._fetch_alleles_fasta(
+                database_name, locus.locus_id, cutoff_date=cutoff_date
+            )
+            fasta_path = alleles_dir / f"{locus.locus_id}.fasta"
+            fasta_path.write_text(fasta_text)
+            allele_counts[locus.locus_id] = locus.alleles_count
 
-    # Run k-mer analysis on alleles
-    quality_results = _run_quality_analysis(
-        alleles_dir,
-        kmer_size=kmer_size,
-        overlap_threshold=overlap_threshold,
-        duplicate_threshold=duplicate_threshold,
-    )
+        profiles_path = organism_dir / "profiles.tsv"
+        _write_profiles_tsv(profiles_path, scheme_data.profiles.profiles)
 
-    # Generate metadata.toml
+        q = _run_quality_analysis(
+            alleles_dir,
+            kmer_size=kmer_size,
+            overlap_threshold=overlap_threshold,
+            duplicate_threshold=duplicate_threshold,
+        )
+        all_quality_results["total_loci"] += q["total_loci"]
+        all_quality_results["similar_pairs"].extend(q["similar_pairs"])
+        all_quality_results["duplicate_pairs"].extend(q["duplicate_pairs"])
+        all_quality_results["loci_results"].update(q["loci_results"])
+
+        scheme_registry[scheme_key] = {
+            "organism": scheme_data.metadata.name,
+            "loci": [locus.locus_id for locus in scheme_data.loci],
+        }
+
     metadata = _generate_metadata(
         namespace=namespace,
         name=torch_name,
         version=torch_version,
-        scheme_data=scheme_data,
+        schemes=schemes,
         database_url=database_url,
-        scheme_id=scheme_id,
-        loci_list=[locus.locus_id for locus in scheme_data.loci],
+        scheme_ids=list(scheme_ids),
+        scheme_registry=scheme_registry,
+        fetch_timestamp=fetch_timestamp,
         kmer_size=kmer_size,
         overlap_threshold=overlap_threshold,
         duplicate_threshold=duplicate_threshold,
-        quality_results=quality_results,
+        quality_results=all_quality_results,
+        cutoff_date=cutoff_date,
     )
 
     metadata_path = torch_dir / "metadata.toml"
     with open(metadata_path, "w") as f:
         toml.dump(metadata, f)
 
-    # Generate quality.json
     quality_report = _generate_quality_report(
         kmer_size=kmer_size,
         overlap_threshold=overlap_threshold,
         duplicate_threshold=duplicate_threshold,
-        quality_results=quality_results,
+        quality_results=all_quality_results,
     )
-
     quality_path = torch_dir / "quality.json"
     with open(quality_path, "w") as f:
         json.dump(quality_report, f, indent=2)
@@ -136,49 +366,25 @@ def convert_scheme(
 
 
 def _extract_database_name(url: str) -> str:
-    """Extract database name from PubMLST URL.
-
-    Args:
-        url: Base URL like "http://pubmlst.org/api" or "http://pubmlst.org/api/"
-
-    Returns:
-        Database name like "pubmlst"
-    """
-    # For now, return a generic database name
-    # In reality, this might need to be specified explicitly
+    """Derive a BIGSdb database name from a PubMLST API URL."""
     if "pubmlst" in url.lower():
         return "pubmlst"
     return "bigsdb"
 
 
 def _sanitize_name(name: str) -> str:
-    """Sanitize a name for use in file paths.
-
-    Args:
-        name: Input name
-
-    Returns:
-        Sanitized name with spaces replaced by underscores
-    """
+    """Sanitize a scheme name for use in file paths."""
     return name.replace(" ", "_").replace("/", "_").lower()
 
 
 def _write_profiles_tsv(profiles_path: Path, profiles: List[Dict[str, str]]) -> None:
-    """Write profiles.tsv file.
-
-    Args:
-        profiles_path: Path to write profiles file
-        profiles: List of profile dictionaries
-    """
+    """Write profiles.tsv file."""
     if not profiles:
-        # Write minimal header
         with open(profiles_path, "w") as f:
             f.write("ST\n")
         return
 
-    # Get field names from first profile
     fieldnames = list(profiles[0].keys())
-
     with open(profiles_path, "w") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
@@ -191,34 +397,23 @@ def _run_quality_analysis(
     overlap_threshold: float = 0.90,
     duplicate_threshold: float = 0.95,
 ) -> Dict[str, Any]:
-    """Run k-mer quality analysis on all loci.
+    """Run k-mer quality analysis on all loci in alleles_dir."""
+    from torchbase.quality.kmer_analysis import analyze_locus
 
-    Args:
-        alleles_dir: Directory containing locus FASTA files
-        kmer_size: K-mer size for analysis
-        overlap_threshold: Threshold for overlap detection
-        duplicate_threshold: Threshold for duplicate detection
-
-    Returns:
-        Dictionary with quality analysis results
-    """
-    results = {
+    results: Dict[str, Any] = {
         "total_loci": 0,
         "similar_pairs": [],
         "duplicate_pairs": [],
         "loci_results": {},
     }
 
-    # Iterate through all FASTA files in alleles directory
     for fasta_file in sorted(alleles_dir.glob("*.fasta")):
         locus_name = fasta_file.stem
-
-        # Run analysis
         report = analyze_locus(
             fasta_file,
             k_size=kmer_size,
-            overlap_threshold=overlap_threshold * 100,  # Convert to 0-100 scale
-            duplicate_threshold=duplicate_threshold * 100,  # Convert to 0-100 scale
+            overlap_threshold=overlap_threshold * 100,
+            duplicate_threshold=duplicate_threshold * 100,
         )
 
         results["total_loci"] += 1
@@ -227,26 +422,17 @@ def _run_quality_analysis(
             "threshold": report.threshold,
         }
 
-        # Collect similar and duplicate pairs
         for pair in report.suspect_pairs:
+            entry = {
+                "locus": locus_name,
+                "allele1": pair["allele1"],
+                "allele2": pair["allele2"],
+                "similarity": pair["similarity"],
+            }
             if pair["issue_type"] == "duplicate":
-                results["duplicate_pairs"].append(
-                    {
-                        "locus": locus_name,
-                        "allele1": pair["allele1"],
-                        "allele2": pair["allele2"],
-                        "similarity": pair["similarity"],
-                    }
-                )
+                results["duplicate_pairs"].append(entry)
             elif pair["issue_type"] == "overlap":
-                results["similar_pairs"].append(
-                    {
-                        "locus": locus_name,
-                        "allele1": pair["allele1"],
-                        "allele2": pair["allele2"],
-                        "similarity": pair["similarity"],
-                    }
-                )
+                results["similar_pairs"].append(entry)
 
     return results
 
@@ -255,48 +441,45 @@ def _generate_metadata(
     namespace: str,
     name: str,
     version: str,
-    scheme_data: Any,
+    schemes: List[SchemeData],
     database_url: str,
-    scheme_id: int,
-    loci_list: List[str],
+    scheme_ids: List[int],
+    scheme_registry: Dict[str, Any],
+    fetch_timestamp: str,
     kmer_size: int,
     overlap_threshold: float,
     duplicate_threshold: float,
     quality_results: Dict[str, Any],
+    cutoff_date: date,
 ) -> Dict[str, Any]:
-    """Generate metadata dictionary.
-
-    Args:
-        namespace: Torch namespace
-        name: Torch name
-        version: Torch version
-        scheme_data: SchemeData object
-        database_url: PubMLST database URL
-        scheme_id: Scheme ID
-        loci_list: List of locus names
-        kmer_size: K-mer size used
-        overlap_threshold: Overlap threshold used
-        duplicate_threshold: Duplicate threshold used
-        quality_results: Quality analysis results
-
-    Returns:
-        Metadata dictionary
-    """
-    now = datetime.now(timezone.utc).isoformat()
+    """Generate metadata.toml content."""
+    total_profiles = sum(
+        (s.profiles.row_count if s.profiles else 0) for s in schemes
+    )
 
     return {
         "namespace": namespace,
         "name": name,
         "version": version,
         "version_info": {
-            "strategy": "snapshot",
-            "timestamp": now,
+            "strategy": "pubmlst-snapshot",
+            "cutoff_date": cutoff_date.isoformat(),
+            "fetch_timestamp": fetch_timestamp,
+            # Alleles submitted to PubMLST after 2024-12-31 require
+            # authentication and carry non-commercial-only terms.  This
+            # snapshot contains only freely-redistributable pre-2025 data,
+            # matching the dataset frozen in tseemann/mlst v2.33.0.
+            "license_note": (
+                "Alleles from PubMLST with date_entered <= "
+                f"{cutoff_date.isoformat()} (freely redistributable; "
+                "pre-2025 licensing terms apply)"
+            ),
         },
         "provenance": {
             "source": "PubMLST",
             "database_url": database_url,
-            "scheme_id": scheme_id,
-            "fetch_date": now,
+            "scheme_ids": scheme_ids,
+            "fetch_date": fetch_timestamp,
         },
         "data_quality": {
             "kmer_analysis_performed": True,
@@ -307,23 +490,11 @@ def _generate_metadata(
             "duplicate_alleles": quality_results.get("duplicate_pairs", []),
         },
         "typing": {
-            "scheme_name": scheme_data.metadata.name,
-            "loci_count": len(loci_list),
-            "profiles_count": scheme_data.profiles.row_count
-            if scheme_data.profiles
-            else 0,
-            "last_updated": (
-                scheme_data.metadata.last_updated.isoformat()
-                if scheme_data.metadata.last_updated
-                else now
-            ),
+            "scheme_count": len(schemes),
+            "loci_count": sum(len(s.loci) for s in schemes),
+            "profiles_count": total_profiles,
         },
-        "schemes": {
-            _sanitize_name(scheme_data.metadata.name): {
-                "organism": scheme_data.metadata.name,
-                "loci": loci_list,
-            }
-        },
+        "schemes": scheme_registry,
     }
 
 
@@ -333,17 +504,7 @@ def _generate_quality_report(
     duplicate_threshold: float,
     quality_results: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Generate quality.json report.
-
-    Args:
-        kmer_size: K-mer size used
-        overlap_threshold: Overlap threshold used
-        duplicate_threshold: Duplicate threshold used
-        quality_results: Quality analysis results
-
-    Returns:
-        Quality report dictionary
-    """
+    """Generate quality.json content."""
     return {
         "kmer_analysis": {
             "performed": True,
