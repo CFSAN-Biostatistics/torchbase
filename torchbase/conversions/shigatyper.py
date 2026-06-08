@@ -21,6 +21,9 @@ from typing import List, IO, Optional
 import toml
 
 from torchbase.quality.kmer_analysis import analyze_locus
+from torchbase.conversions.log import get_logger, TRACE
+
+_log = get_logger("shigatyper")
 
 
 TAXA = ["Shigella"]
@@ -85,6 +88,7 @@ def convert_local(
         Path to the created torch directory.
     """
     output_path = Path(output_path)
+    _log.info("Starting shigatyper conversion → %s/%s %s", namespace, name, version)
     torch_dir = output_path / namespace / name / f"{version}.torch"
     torch_dir.mkdir(parents=True, exist_ok=True)
 
@@ -97,6 +101,9 @@ def convert_local(
         dest = resources_dir / src.name
         shutil.copy2(src, dest)
         locus_names.append(src.stem)
+        _log.debug("  copying %s → %s (%d bytes)", src.name, dest, dest.stat().st_size)
+
+    _log.info("  %d locus file(s): %s", len(locus_names), ", ".join(locus_names))
 
     profiles_dest = torch_dir / "profiles.tsv"
     if profiles_file is not None:
@@ -108,9 +115,15 @@ def convert_local(
         _write_stub_profiles(profiles_dest, locus_names)
         profile_count = 0
 
+    _log.info("  profiles: %d rows", profile_count)
+    _log.debug("  profiles written to %s (%d rows)", profiles_dest, profile_count)
+
+    _log.info("  running k-mer quality analysis on %d loci (k=%d)", len(locus_names), kmer_size)
     quality_results = _run_quality_analysis(
         resources_dir, kmer_size, overlap_threshold, duplicate_threshold
     )
+    _log.info("  quality summary: %d suspect loci, %d duplicate pairs",
+              quality_results.get("suspect_loci", 0), len(quality_results.get("duplicate_pairs", [])))
 
     now = datetime.now(timezone.utc).isoformat()
     metadata = {
@@ -144,11 +157,14 @@ def convert_local(
     }
     with open(torch_dir / "metadata.toml", "w") as f:
         toml.dump(metadata, f)
+    _log.debug("  metadata.toml written")
 
     quality_report = _build_quality_report(locus_names, quality_results, kmer_size, overlap_threshold)
     with open(torch_dir / "quality.json", "w") as f:
         json.dump(quality_report, f, indent=2)
+    _log.debug("  quality.json written")
 
+    _log.info("Torch written: %s", torch_dir)
     return str(torch_dir)
 
 
@@ -210,6 +226,12 @@ def _run_quality_analysis(resources_dir, kmer_size, overlap_threshold, duplicate
                 "percentile_99": sims[min(int(n * 0.99), n - 1)],
             }
         results["loci_results"][locus_name] = entry
+        _log.debug("    %s: %d alleles, %d suspect pairs (threshold=%.3f)",
+                   locus_name, entry["allele_count"], len(report.suspect_pairs), report.threshold)
+        for pair in report.suspect_pairs:
+            _log.log(TRACE, "      suspect: %s ↔ %s  sim=%.4f  type=%s",
+                     pair.get("allele1"), pair.get("allele2"),
+                     pair.get("similarity", 0), pair.get("issue_type", "?"))
         if report.suspect_pairs:
             results["suspect_loci"] += 1
             for pair in report.suspect_pairs:

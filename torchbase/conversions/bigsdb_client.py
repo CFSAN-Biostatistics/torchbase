@@ -14,6 +14,10 @@ import io
 import re
 import requests
 
+from torchbase.conversions.log import get_logger, TRACE
+
+_log = get_logger("bigsdb")
+
 
 # Custom exceptions
 
@@ -198,6 +202,7 @@ class BIGSdbClient:
         """
         url = f"{self.base_url}/{endpoint}"
 
+        _log.log(TRACE, "HTTP GET %s (params=%s)", url, params or {})
         try:
             response = requests.get(url, params=params, timeout=self.timeout)
         except (
@@ -209,6 +214,12 @@ class BIGSdbClient:
         ) as e:
             raise BIGSdbNetworkError(f"Network error: {str(e)}") from e
 
+        if _log.isEnabledFor(TRACE):
+            try:
+                content_len = len(response.content)
+            except TypeError:
+                content_len = -1
+            _log.log(TRACE, "  → HTTP %s, %d bytes", response.status_code, content_len)
         if response.status_code >= 400:
             msg = f"API error {response.status_code}: {response.reason}"
             raise BIGSdbError(msg)
@@ -292,6 +303,10 @@ class BIGSdbClient:
             endpoint = f"db/{database}/schemes/{scheme_id}/loci"
             data = self._make_request("GET", endpoint, params=params)
 
+            paging = data.get("paging", {})
+            total_pages = paging.get("pages", 1)
+            _log.debug("Fetching loci for scheme %s (page %d/%s)", scheme_id, page, total_pages or "?")
+
             records = data.get("records", [])
             for record in records:
                 last_updated = None
@@ -306,8 +321,6 @@ class BIGSdbClient:
                 )
                 loci.append(locus)
 
-            paging = data.get("paging", {})
-            total_pages = paging.get("pages", 1)
             if page >= total_pages:
                 break
 
@@ -343,6 +356,7 @@ class BIGSdbClient:
         if updated_after:
             params["updated_after"] = updated_after.isoformat()
 
+        _log.debug("Fetching profiles for scheme %s", scheme_id)
         endpoint = f"db/{database}/schemes/{scheme_id}/profiles_csv"
         csv_text = self._make_request(
             "GET", endpoint, params=params, expect_json=False
@@ -358,6 +372,7 @@ class BIGSdbClient:
         for row in reader:
             profiles.append(row)
 
+        _log.debug("  profiles: %d rows", len(profiles))
         # Capture current timestamp for provenance
         last_updated = datetime.now(timezone.utc)
 
@@ -414,6 +429,7 @@ class BIGSdbClient:
         Raises:
             BIGSdbError: If alleles cannot be fetched
         """
+        _log.debug("Fetching alleles for locus %s (cutoff %s, page-by-page)", locus_id, cutoff_date)
         lines = []
         page = 1
 
@@ -421,29 +437,36 @@ class BIGSdbClient:
             endpoint = f"db/{database}/loci/{locus_id}/alleles"
             data = self._make_request("GET", endpoint, params={"page": page})
 
+            paging = data.get("paging", {})
+            total_pages = paging.get("pages", 1)
+            _log.log(TRACE, "  locus %s: page %d/%s", locus_id, page, total_pages or "?")
+
             records = data.get("alleles", data.get("records", []))
             for record in records:
                 date_str = record.get("date_entered", "")
+                allele_id = record.get("allele_id", "")
                 if date_str:
                     try:
                         entry_date = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
                         if entry_date > cutoff_date:
+                            _log.log(TRACE, "    %s_%s: date_entered=%s, skipped (after cutoff %s)",
+                                     locus_id, allele_id, date_str[:10], cutoff_date)
                             continue
                     except ValueError:
                         pass
 
-                allele_id = record.get("allele_id", "")
                 sequence = record.get("sequence", "")
                 if allele_id and sequence:
+                    _log.log(TRACE, "    %s_%s: date_entered=%s, kept",
+                             locus_id, allele_id, date_str[:10] if date_str else "unknown")
                     lines.append(f">{locus_id}_{allele_id}")
                     lines.append(sequence)
 
-            paging = data.get("paging", {})
-            total_pages = paging.get("pages", 1)
             if page >= total_pages:
                 break
             page += 1
 
+        _log.debug("  %s: %d alleles kept (cutoff %s)", locus_id, len(lines) // 2, cutoff_date)
         return "\n".join(lines) + ("\n" if lines else "")
 
     def list_databases(self) -> List[DatabaseInfo]:
@@ -460,6 +483,7 @@ class BIGSdbClient:
         Raises:
             BIGSdbError: If the database list cannot be fetched
         """
+        _log.info("Enumerating databases from %s", self.base_url)
         data = self._make_request("GET", "databases")
         raw = data.get("databases", data.get("records", []))
 
@@ -476,6 +500,9 @@ class BIGSdbClient:
             if name.endswith("_seqdef"):
                 databases.append(DatabaseInfo(name=name, description=description))
 
+        _log.debug("  found %d seqdef databases", len(databases))
+        for db in databases:
+            _log.log(TRACE, "    database: %s", db.name)
         return databases
 
     def list_schemes(self, database: str) -> List[SchemeInfo]:
@@ -490,6 +517,7 @@ class BIGSdbClient:
         Raises:
             BIGSdbError: If the scheme list cannot be fetched
         """
+        _log.debug("Listing schemes in %s", database)
         endpoint = f"db/{database}/schemes"
         data = self._make_request("GET", endpoint)
 
@@ -511,6 +539,8 @@ class BIGSdbClient:
                 description = entry.get("description", entry.get("name", f"Scheme {scheme_id}"))
                 schemes.append(SchemeInfo(scheme_id=scheme_id, description=description))
 
+        for s in schemes:
+            _log.log(TRACE, "    scheme %d: %s", s.scheme_id, s.description)
         return schemes
 
     def fetch_scheme(

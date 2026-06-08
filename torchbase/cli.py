@@ -806,9 +806,13 @@ def _build(torch):
     click.echo("Torch structure is valid.")
 
 @tools.group("convert")
-def convert():
+@click.option("-v", "--verbose", count=True,
+              help="Increase output verbosity. Use -v for progress, -vv for per-locus detail, -vvv for diagnostic trace.")
+@click.pass_context
+def convert(ctx, verbose):
     "Various conversion tools to make torches."
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["verbosity"] = verbose
 
 @convert.command("pubmlst")
 @click.option("--url", required=True, help="PubMLST database API URL")
@@ -831,7 +835,8 @@ def convert():
 @click.option("--kmer-size", default=13, type=int, help="K-mer size for quality analysis")
 @click.option("--overlap-threshold", default=0.90, type=float, help="Overlap threshold for quality analysis")
 @click.option("--duplicate-threshold", default=0.95, type=float, help="Duplicate threshold for quality analysis")
-def _convert_pubmlst(url, scheme_id, fetch_all, output, name, namespace, cutoff_date,
+@click.pass_context
+def _convert_pubmlst(ctx, url, scheme_id, fetch_all, output, name, namespace, cutoff_date,
                      no_skip_errors, kmer_size, overlap_threshold, duplicate_threshold):
     """Convert PubMLST schemes into a multi-scheme torch.
 
@@ -845,6 +850,8 @@ def _convert_pubmlst(url, scheme_id, fetch_all, output, name, namespace, cutoff_
     freely-redistributable terms, matching the dataset snapshot bundled in
     tseemann/mlst v2.33.0.
     """
+    from torchbase.conversions.log import setup_logging
+    setup_logging(ctx.obj.get("verbosity", 0))
     from datetime import date as _date
     from torchbase.conversions.pubmlst import convert_schemes, convert_all
 
@@ -897,8 +904,11 @@ def _convert_pubmlst(url, scheme_id, fetch_all, output, name, namespace, cutoff_
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _pubcgmlst(scheme, sequences, output, namespace, name, version, kmer_size, overlap_threshold, duplicate_threshold):
+@click.pass_context
+def _pubcgmlst(ctx, scheme, sequences, output, namespace, name, version, kmer_size, overlap_threshold, duplicate_threshold):
     "Create a torch from a PubMLST cgMLST database and schema."
+    from torchbase.conversions.log import setup_logging
+    setup_logging(ctx.obj.get("verbosity", 0))
     from torchbase.conversions.pubcgmlst import convert_local
 
     try:
@@ -927,8 +937,11 @@ def _pubcgmlst(scheme, sequences, output, namespace, name, version, kmer_size, o
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _seqsero2(sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
+@click.pass_context
+def _seqsero2(ctx, sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from SeqSero2 Salmonella serotyping database files."
+    from torchbase.conversions.log import setup_logging
+    setup_logging(ctx.obj.get("verbosity", 0))
     import tempfile
     from torchbase.conversions.seqsero2 import convert_local, DOWNLOAD_SOURCES
 
@@ -974,9 +987,12 @@ def _seqsero2(sequences, profiles, output, name, version, kmer_size, overlap_thr
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _seqsero2s(sequences, antigen_db, mlst_profiles, serotype_profiles,
+@click.pass_context
+def _seqsero2s(ctx, sequences, antigen_db, mlst_profiles, serotype_profiles,
                output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from SeqSero2S (LSTUGA) Salmonella serotyping + MLST database files."
+    from torchbase.conversions.log import setup_logging
+    setup_logging(ctx.obj.get("verbosity", 0))
     import tempfile
     from torchbase.conversions.seqsero2s import convert_local, DOWNLOAD_SOURCES
 
@@ -1024,8 +1040,11 @@ def _seqsero2s(sequences, antigen_db, mlst_profiles, serotype_profiles,
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _ectyper(sequences, profiles, db_fasta, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
+@click.pass_context
+def _ectyper(ctx, sequences, profiles, db_fasta, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from ECTyper E. coli / Shigella serotyping database files."
+    from torchbase.conversions.log import setup_logging
+    setup_logging(ctx.obj.get("verbosity", 0))
     import tempfile
     from torchbase.conversions.ectyper import convert_local, DOWNLOAD_SOURCES
 
@@ -1071,8 +1090,11 @@ def _ectyper(sequences, profiles, db_fasta, output, name, version, kmer_size, ov
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _lissero(sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
+@click.pass_context
+def _lissero(ctx, sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from LisSero Listeria monocytogenes serogroup database files."
+    from torchbase.conversions.log import setup_logging
+    setup_logging(ctx.obj.get("verbosity", 0))
     import tempfile
     from torchbase.conversions.lissero import convert_local, DOWNLOAD_SOURCES
 
@@ -1121,8 +1143,11 @@ def _chewie_ns():
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
-def _shigatyper(sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
+@click.pass_context
+def _shigatyper(ctx, sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from ShigaTyper's database."
+    from torchbase.conversions.log import setup_logging
+    setup_logging(ctx.obj.get("verbosity", 0))
     import tempfile
     from torchbase.conversions.shigatyper import convert_local, DOWNLOAD_SOURCES
 

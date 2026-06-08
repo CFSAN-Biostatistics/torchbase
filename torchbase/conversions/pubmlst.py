@@ -24,6 +24,9 @@ import csv
 import toml
 
 from torchbase.conversions.bigsdb_client import BIGSdbClient, SchemeData, DatabaseInfo
+from torchbase.conversions.log import get_logger, TRACE
+
+_log = get_logger("pubmlst")
 
 # PubMLST changed licensing for data submitted from this date onward.
 PUBMLST_LICENSE_CUTOFF = date(2024, 12, 31)
@@ -78,6 +81,7 @@ def convert_all(
     schemes_dir = torch_dir / "schemes"
     schemes_dir.mkdir(exist_ok=True)
 
+    _log.info("Starting full PubMLST conversion (cutoff: %s)", cutoff_date)
     databases = client.list_databases()
 
     all_quality_results: Dict[str, Any] = {
@@ -97,11 +101,15 @@ def convert_all(
             scheme_list = client.list_schemes(database)
         except Exception as exc:
             if skip_errors:
+                import logging as _stdlib_logging
+                _log.warning("skipping database %s: %s", database, exc)
                 print(f"[warn] skipping database {database}: {exc}", file=sys.stderr)
                 continue
             raise
 
+        _log.info("Processing database: %s (%d schemes)", database, len(scheme_list))
         for scheme_info in scheme_list:
+            _log.debug("  scheme %d: %s", scheme_info.scheme_id, scheme_info.description)
             try:
                 scheme_data = client.fetch_scheme(
                     database, scheme_info.scheme_id, cutoff_date=cutoff_date
@@ -114,6 +122,8 @@ def convert_all(
                     )
                     continue
                 raise
+
+            _log.debug("  fetched scheme %d: %s (%d loci)", scheme_info.scheme_id, scheme_data.metadata.name, len(scheme_data.loci))
 
             # Prefix with database name to avoid collisions across organisms.
             # Strip the common "pubmlst_" prefix and "_seqdef" suffix for readability.
@@ -129,7 +139,9 @@ def convert_all(
                 fasta_text = client._fetch_alleles_fasta(
                     database, locus.locus_id, cutoff_date=cutoff_date
                 )
-                (alleles_dir / f"{locus.locus_id}.fasta").write_text(fasta_text)
+                locus_fasta_path = alleles_dir / f"{locus.locus_id}.fasta"
+                locus_fasta_path.write_text(fasta_text)
+                _log.debug("    locus %s: wrote %s", locus.locus_id, locus_fasta_path)
 
             _write_profiles_tsv(
                 organism_dir / "profiles.tsv", scheme_data.profiles.profiles
@@ -141,6 +153,7 @@ def convert_all(
                 overlap_threshold=overlap_threshold,
                 duplicate_threshold=duplicate_threshold,
             )
+            _log_quality_results(_log, scheme_key, q)
             all_quality_results["total_loci"] += q["total_loci"]
             all_quality_results["similar_pairs"].extend(q["similar_pairs"])
             all_quality_results["duplicate_pairs"].extend(q["duplicate_pairs"])
@@ -190,6 +203,8 @@ def convert_all(
     with open(quality_path, "w") as f:
         json.dump(quality_report, f, indent=2)
 
+    _log.info("Torch written: %d schemes, %d total loci → %s",
+              len(scheme_registry), all_quality_results['total_loci'], torch_dir)
     return str(torch_dir)
 
 
@@ -263,6 +278,7 @@ def convert_schemes(
     output_path = Path(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    _log.info("Converting %d scheme(s) from %s (cutoff: %s)", len(scheme_ids), database_url, cutoff_date)
     client = BIGSdbClient(database_url)
     database_name = _extract_database_name(database_url)
 
@@ -273,9 +289,10 @@ def convert_schemes(
     # Fetch all schemes first so we can derive a name before creating dirs.
     schemes: List[SchemeData] = []
     for sid in scheme_ids:
-        schemes.append(
-            client.fetch_scheme(database_name, sid, cutoff_date=cutoff_date)
-        )
+        sd = client.fetch_scheme(database_name, sid, cutoff_date=cutoff_date)
+        _log.info("  scheme %d: %s (%d loci, %d profiles)", sd.metadata.scheme_id, sd.metadata.name,
+                  len(sd.loci), sd.profiles.row_count if sd.profiles else 0)
+        schemes.append(sd)
 
     derived_name = _sanitize_name(schemes[0].metadata.name)
     if torch_name is None:
@@ -312,6 +329,7 @@ def convert_schemes(
             fasta_path = alleles_dir / f"{locus.locus_id}.fasta"
             fasta_path.write_text(fasta_text)
             allele_counts[locus.locus_id] = locus.alleles_count
+            _log.debug("    locus %s: %d alleles", locus.locus_id, locus.alleles_count)
 
         profiles_path = organism_dir / "profiles.tsv"
         _write_profiles_tsv(profiles_path, scheme_data.profiles.profiles)
@@ -322,6 +340,7 @@ def convert_schemes(
             overlap_threshold=overlap_threshold,
             duplicate_threshold=duplicate_threshold,
         )
+        _log_quality_results(_log, scheme_key, q)
         all_quality_results["total_loci"] += q["total_loci"]
         all_quality_results["similar_pairs"].extend(q["similar_pairs"])
         all_quality_results["duplicate_pairs"].extend(q["duplicate_pairs"])
@@ -362,6 +381,7 @@ def convert_schemes(
     with open(quality_path, "w") as f:
         json.dump(quality_report, f, indent=2)
 
+    _log.info("Torch written: %s", torch_dir)
     return str(torch_dir)
 
 
@@ -389,6 +409,20 @@ def _write_profiles_tsv(profiles_path: Path, profiles: List[Dict[str, str]]) -> 
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
         writer.writerows(profiles)
+
+
+def _log_quality_results(log, scheme_key: str, q: Dict[str, Any]) -> None:
+    """Emit quality summary at DEBUG and suspect pairs at TRACE."""
+    suspect_loci = [k for k, v in q.get("loci_results", {}).items() if v.get("suspect_pairs")]
+    duplicate_pairs = q.get("duplicate_pairs", [])
+    log.debug("  quality: %s — %d loci, %d suspect loci, %d duplicate pairs",
+              scheme_key, q.get("total_loci", 0), len(suspect_loci), len(duplicate_pairs))
+    for locus_name, locus_data in q.get("loci_results", {}).items():
+        for pair in locus_data.get("suspect_pairs", []):
+            log.log(TRACE, "    suspect: %s allele %s ↔ %s (sim=%.3f, type=%s)",
+                    locus_name,
+                    pair.get("allele1"), pair.get("allele2"),
+                    pair.get("similarity", 0), pair.get("issue_type", "?"))
 
 
 def _run_quality_analysis(
@@ -422,7 +456,12 @@ def _run_quality_analysis(
             "threshold": report.threshold,
         }
 
+        _log.debug("    %s: %d suspect pairs (threshold=%.3f)",
+                   locus_name, len(report.suspect_pairs), report.threshold)
         for pair in report.suspect_pairs:
+            _log.log(TRACE, "      suspect: %s ↔ %s  sim=%.4f  type=%s",
+                     pair.get("allele1"), pair.get("allele2"),
+                     pair.get("similarity", 0), pair.get("issue_type", "?"))
             entry = {
                 "locus": locus_name,
                 "allele1": pair["allele1"],

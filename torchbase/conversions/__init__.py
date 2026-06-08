@@ -1,6 +1,9 @@
 """Shared utilities for torch converters."""
 
+import logging as _logging
 from pathlib import Path
+
+_log = _logging.getLogger("torchbase.conversions.fetch")
 
 
 def fetch_file(url: str, dest: Path, *, progress: bool = True) -> Path:
@@ -14,7 +17,7 @@ def fetch_file(url: str, dest: Path, *, progress: bool = True) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     if progress:
-        print(f"  Downloading {dest.name} ...", flush=True)
+        _log.info("Downloading %s ...", dest.name)
 
     resp = requests.get(url, timeout=120, stream=True)
     resp.raise_for_status()
