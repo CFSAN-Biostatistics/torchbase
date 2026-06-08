@@ -16,6 +16,8 @@ class RegistryConfig:
     key_registries: List[str] = field(default_factory=list)
     trusted_keys: Dict[str, str] = field(default_factory=dict)
     key_cache_ttl_hours: int = 24
+    namespaces: Dict[str, str] = field(default_factory=dict)
+    log_operators: List[str] = field(default_factory=list)
 
     @staticmethod
     def load(user_config_dir: Optional[Path] = None,
@@ -102,5 +104,11 @@ class RegistryConfig:
             config.trusted_keys.update(data["trusted_keys"])
         if "key_cache_ttl_hours" in data:
             config.key_cache_ttl_hours = int(data["key_cache_ttl_hours"])
+
+        # Merge chain namespace registry and log operators
+        if "namespaces" in data:
+            config.namespaces.update(data["namespaces"])
+        if "log_operators" in data:
+            config.log_operators = list(data["log_operators"])
 
         return config

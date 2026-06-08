@@ -344,6 +344,131 @@ re-fetched after `key_cache_ttl_hours` hours.
 
 ---
 
+## Publishing torches with IPLD commit chains
+
+`torchtools manifest add` is the complete publishing workflow — it signs, uploads,
+and appends a tamper-evident update block to your namespace's IPLD commit chain.
+Every namespace has its own append-only history; altering any past block breaks
+every forward CID link.
+
+### One-time: generate a key and register the namespace
+
+```
+# 1. Generate an Ed25519 key for your namespace
+torchtools keygen --namespace cdc
+
+# 2. Register the namespace (creates genesis block, publishes to IPNS)
+torchtools namespace register --namespace cdc
+```
+
+`namespace register` does the following:
+
+1. Imports your Ed25519 PEM key into Kubo's keystore as the key named `cdc`
+2. Creates and signs a genesis block (namespace claim)
+3. Uploads the genesis block to IPFS and pins it
+4. Publishes the genesis CID to IPNS under your key
+5. Submits the genesis CID to any configured log operators
+6. Writes the IPNS address to `~/.torchbase/config.toml`:
+
+```toml
+[namespaces]
+"cdc" = "/ipns/k51q..."
+```
+
+Share that config snippet with collaborators so they can resolve your torches.
+
+### Publishing a torch
+
+```
+torchtools manifest add ./torches/cdc/seqsero2/2.0.0.torch
+```
+
+Steps executed:
+
+1. Sign the torch (writes/overwrites `signature.toml`)
+2. Upload the torch directory to IPFS via multipart upload; pin the CID
+3. Sign the CID: `"{namespace}:{version}:{cid}"` with your namespace key
+4. Resolve the current IPNS head (the previous block CID)
+5. Build and upload an update block:
+
+```toml
+type      = "update"
+namespace = "cdc"
+previous  = "<previous block CID>"
+timestamp = "2026-06-07T12:00:00+00:00"
+signature = "<base64url>"
+
+["cdc/seqsero2"]
+"2.0.0" = "<torch CID>"
+latest   = "<torch CID>"
+
+["cdc/seqsero2".signatures]
+"2.0.0" = "<base64url CID signature>"
+```
+
+6. Publish the update block CID to IPNS (chain head advances)
+7. Optionally submit the genesis CID to configured log operators
+
+Output includes the torch CID, block CID, IPNS address, and the equivalent
+manifest TOML entry for reference.
+
+### YubiKey signing
+
+```
+torchtools namespace register --namespace cdc --yubikey --slot 9c
+torchtools manifest add ./torches/cdc/seqsero2/2.0.0.torch --yubikey --slot 9c
+```
+
+### Inspecting a namespace chain
+
+```
+# Print reconstructed manifest (walks chain, verifies all sigs)
+torchtools manifest show cdc
+
+# More detail including block count and genesis public key
+torchtools namespace show cdc
+```
+
+Both commands fail loudly if any block signature is invalid or if the chain has
+a broken previous-CID link.
+
+### Client resolution
+
+Once the IPNS address is in a collaborator's `~/.torchbase/config.toml`,
+`torchbase pull` resolves from the chain automatically:
+
+```
+torchbase pull cdc/seqsero2
+```
+
+Resolution order:
+1. Chain-based namespace registries (`[namespaces]` in config) — checked first
+2. HTTP/IPNS flat-manifest registries (`[registries]`)
+3. Error if not found in any source
+
+### CT-style log operators
+
+Log operators record genesis CIDs permissionlessly — they don't approve
+namespaces, they only log them. Multiple independent log operators can exist;
+clients don't need to trust any particular one.
+
+Configure log operators in `~/.torchbase/config.toml`:
+
+```toml
+log_operators = [
+    "https://log.torchbase.org/submit",
+]
+```
+
+Or pass `--submit-to` on any publish command:
+
+```
+torchtools namespace register --namespace cdc --submit-to https://log.example.org/submit
+torchtools manifest add ./torches/cdc/seqsero2/2.0.0.torch --submit-to https://log.example.org/submit
+```
+
+---
+
 ## Quality analysis
 
 Every converter runs k-mer quality analysis on the allele FASTA files it

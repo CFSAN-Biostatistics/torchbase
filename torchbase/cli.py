@@ -1190,12 +1190,228 @@ def _sign(torch, yubikey, slot, pin):
 @_yubikey_signer_options
 @click.pass_context
 def _publish(ctx, torch, yubikey, slot, pin):
-    """Sign, upload to IPFS, sign the CID, and print manifest snippet."""
+    """Deprecated: use 'torchtools manifest add' instead."""
+    click.echo(
+        "Warning: 'torchtools publish' is deprecated and will be removed in a future release.\n"
+        "Use 'torchtools manifest add <torch-path>' instead.",
+        err=True,
+    )
+    ctx.invoke(_manifest_add, torch=torch, yubikey=yubikey, slot=slot, pin=pin)
+
+
+# ---------------------------------------------------------------------------
+# torchtools namespace  (register / show)
+# ---------------------------------------------------------------------------
+
+@tools.group("namespace")
+def _namespace_group():
+    """Namespace registration and inspection commands."""
+    pass
+
+
+@_namespace_group.command("register")
+@click.option("--namespace", required=True, help="Namespace to register (e.g. 'cdc')")
+@click.option("--ipfs-node", default="127.0.0.1", show_default=True)
+@click.option("--ipfs-port", default=5001, show_default=True, type=int)
+@click.option("--submit-to", multiple=True, metavar="URL",
+              help="Log operator URL(s) to submit the genesis block to")
+@_yubikey_signer_options
+def _namespace_register(namespace, ipfs_node, ipfs_port, submit_to, yubikey, slot, pin):
+    """Register a namespace by creating and publishing a genesis block.
+
+    Steps:
+      1. Import your Ed25519 key into Kubo's keystore
+      2. Create and sign the genesis block
+      3. Upload the genesis block to IPFS and pin it
+      4. Publish the genesis block CID to IPNS (via your namespace key)
+      5. Submit to any --submit-to log operators
+      6. Write the IPNS address to ~/.torchbase/config.toml
+    """
+    import shutil
+    import tempfile
+    import toml as _toml
+    from torchbase.chain import (
+        make_genesis_block, block_to_toml, upload_block, pin_cid,
+        publish_chain_head, import_key_to_kubo, submit_to_log,
+    )
+
+    signer = _build_signer(namespace, yubikey=yubikey, slot=slot, pin=pin)
+
+    # Import key into Kubo keystore (idempotent if already present)
+    key_path = Path.home() / ".torchbase" / "keys" / f"{namespace}.key"
+    if not yubikey and key_path.exists():
+        click.echo(f"Importing key into Kubo keystore as '{namespace}' ...")
+        try:
+            ipns_address = import_key_to_kubo(namespace, key_path, ipfs_node, ipfs_port)
+        except Exception as e:
+            raise click.ClickException(f"Key import failed: {e}")
+    else:
+        # YubiKey or no PEM — derive IPNS address from Kubo if key already there
+        # (user must have imported manually); we'll discover it after publishing
+        ipns_address = None
+
+    # Build and upload genesis block
+    click.echo("Creating genesis block ...")
+    genesis = make_genesis_block(namespace, signer)
+    genesis_toml = block_to_toml(genesis)
+
+    try:
+        genesis_cid = upload_block(genesis_toml, ipfs_node, ipfs_port)
+        pin_cid(genesis_cid, ipfs_node, ipfs_port)
+    except Exception as e:
+        raise click.ClickException(f"IPFS upload failed: {e}")
+
+    # Publish IPNS head
+    click.echo(f"Publishing genesis block {genesis_cid} to IPNS ...")
+    try:
+        publish_chain_head(genesis_cid, namespace, ipfs_node, ipfs_port)
+    except Exception as e:
+        raise click.ClickException(f"IPNS publish failed: {e}")
+
+    # Discover IPNS address if we didn't get it from import
+    if ipns_address is None:
+        from torchbase.chain import get_chain_head, _kubo_url
+        try:
+            resp = requests.post(
+                f"{_kubo_url(ipfs_node, ipfs_port)}/key/list",
+                timeout=10,
+            )
+            resp.raise_for_status()
+            for entry in resp.json().get("Keys", []):
+                if entry.get("Name") == namespace:
+                    ipns_address = "/ipns/" + entry["Id"]
+                    break
+        except Exception:
+            pass
+        if ipns_address is None:
+            ipns_address = f"<run 'ipfs key list' to find IPNS address for '{namespace}'>"
+
+    # Submit to log operators
+    all_log_urls = list(submit_to)
+    if not all_log_urls:
+        from torchbase.config import RegistryConfig
+        cfg = RegistryConfig.load()
+        all_log_urls = list(cfg.log_operators)
+    for log_url in all_log_urls:
+        click.echo(f"Submitting to log operator: {log_url}")
+        try:
+            submit_to_log(genesis_cid, namespace, ipns_address, log_url)
+        except Exception as e:
+            click.echo(f"  Warning: log submission failed: {e}", err=True)
+
+    # Write IPNS address to user config
+    config_path = Path.home() / ".torchbase" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _toml.load(config_path) if config_path.exists() else {}
+    if "namespaces" not in existing:
+        existing["namespaces"] = {}
+    existing["namespaces"][namespace] = ipns_address
+    fd, tmp = tempfile.mkstemp(dir=config_path.parent, suffix=".toml.tmp")
+    try:
+        with open(fd, "w") as f:
+            _toml.dump(existing, f)
+        shutil.move(tmp, config_path)
+    except Exception:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+    click.echo(f"\nNamespace '{namespace}' registered.")
+    click.echo(f"  Genesis CID:  {genesis_cid}")
+    click.echo(f"  IPNS address: {ipns_address}")
+    click.echo(f"\nConfig snippet for collaborators:")
+    click.echo(f'  [namespaces]')
+    click.echo(f'  "{namespace}" = "{ipns_address}"')
+
+
+@_namespace_group.command("show")
+@click.argument("namespace", required=True)
+@click.option("--ipfs-node", default="127.0.0.1", show_default=True)
+@click.option("--ipfs-port", default=5001, show_default=True, type=int)
+def _namespace_show(namespace, ipfs_node, ipfs_port):
+    """Walk the IPLD chain for a namespace and print its reconstructed manifest."""
+    import toml as _toml
+    from torchbase.chain import get_chain_head, walk_chain, reconstruct_manifest
+    from torchbase.config import RegistryConfig
+
+    config = RegistryConfig.load()
+    ipns_address = config.namespaces.get(namespace)
+    if not ipns_address:
+        raise click.ClickException(
+            f"Namespace '{namespace}' not in config. "
+            f"Run: torchtools namespace register --namespace {namespace}"
+        )
+
+    head_cid = get_chain_head(ipns_address, ipfs_node, ipfs_port)
+    if head_cid is None:
+        raise click.ClickException(f"Could not resolve IPNS address {ipns_address}")
+
+    click.echo(f"Head CID:     {head_cid}")
+
+    try:
+        chain = walk_chain(head_cid, ipfs_node, ipfs_port)
+    except ValueError as e:
+        raise click.ClickException(f"Chain verification failed: {e}")
+
+    genesis_cid = None
+    for block in chain:
+        if block.get("type") == "genesis":
+            genesis_cid = head_cid if len(chain) == 1 else "..."
+            break
+
+    click.echo(f"Block count:  {len(chain)}")
+    click.echo(f"Genesis CID:  {chain[0].get('public_key', '')[:16]}... (public key prefix)")
+    manifest = reconstruct_manifest(chain)
+    if manifest:
+        click.echo("\nReconstructed manifest:")
+        click.echo(_toml.dumps(manifest))
+    else:
+        click.echo("\nNo torches published yet.")
+
+
+# ---------------------------------------------------------------------------
+# torchtools manifest  (add / show)
+# ---------------------------------------------------------------------------
+
+@tools.group("manifest")
+def _manifest_group():
+    """Manifest publishing commands (IPLD commit chain)."""
+    pass
+
+
+@_manifest_group.command("add")
+@torch
+@click.option("--ipfs-node", default="127.0.0.1", show_default=True)
+@click.option("--ipfs-port", default=5001, show_default=True, type=int)
+@click.option("--submit-to", multiple=True, metavar="URL",
+              help="Extra log operator URL(s) to notify")
+@_yubikey_signer_options
+def _manifest_add(torch, ipfs_node, ipfs_port, submit_to, yubikey, slot, pin):
+    """Sign a torch, upload it to IPFS, and publish an update block.
+
+    Steps:
+      1. Sign the torch (idempotent — rewrites signature.toml)
+      2. Upload the torch directory to IPFS, pin the CID
+      3. Sign the CID
+      4. Resolve the namespace IPNS head (the previous block CID)
+      5. Build and upload an update block referencing the previous block
+      6. Publish the new block CID to IPNS
+      7. Submit to configured log operators
+    """
+    import shutil
+    import tempfile
     import toml as _toml
     from torchbase.signing import sign_torch, sign_cid
-    from torchbase.torchfs import _kubo_url, node, port
+    from torchbase.chain import (
+        make_update_block, block_to_toml, upload_block, pin_cid,
+        upload_directory, get_chain_head, publish_chain_head,
+        walk_chain, submit_to_log,
+    )
+    from torchbase.config import RegistryConfig
 
     torch_path = Path(torch)
+    if not torch_path.is_dir():
+        raise click.ClickException(f"Not a directory: {torch_path}")
+
     meta = _toml.load(torch_path / "metadata.toml")
     namespace = meta["namespace"]
     name = meta["name"]
@@ -1203,34 +1419,141 @@ def _publish(ctx, torch, yubikey, slot, pin):
 
     signer = _build_signer(namespace, yubikey=yubikey, slot=slot, pin=pin)
 
-    # Sign content
+    # Step 1 — sign content
+    click.echo("Signing torch ...")
     sig_path = sign_torch(torch_path, signer)
-    click.echo(f"Signed content: {sig_path}")
+    click.echo(f"  {sig_path}")
 
-    # Upload to IPFS
+    # Step 2 — upload to IPFS
+    click.echo("Uploading to IPFS ...")
     try:
-        resp = requests.post(
-            f"{_kubo_url(node, port)}/add",
-            params={"recursive": "true", "quieter": "true"},
-            files={"upload": ("", open(str(torch_path), "rb"))},
-            timeout=120,
-        )
-        resp.raise_for_status()
-        cid = resp.json()["Hash"]
+        torch_cid = upload_directory(torch_path, ipfs_node, ipfs_port)
+        pin_cid(torch_cid, ipfs_node, ipfs_port)
     except Exception as e:
         raise click.ClickException(f"IPFS upload failed: {e}")
+    click.echo(f"  torch CID: {torch_cid}")
 
-    # Sign CID
-    cid_sig = sign_cid(cid, namespace, version, signer)
+    # Step 3 — sign the CID
+    cid_sig = sign_cid(torch_cid, namespace, version, signer)
 
+    # Step 4 — find previous block (chain head)
+    config = RegistryConfig.load()
+    ipns_address = config.namespaces.get(namespace)
+    if not ipns_address:
+        raise click.ClickException(
+            f"Namespace '{namespace}' not found in config. "
+            f"Run: torchtools namespace register --namespace {namespace}"
+        )
+    previous_cid = get_chain_head(ipns_address, ipfs_node, ipfs_port)
+    if previous_cid is None:
+        raise click.ClickException(
+            f"Could not resolve chain head for {ipns_address}. "
+            f"Run 'torchtools namespace register' first."
+        )
+
+    # Step 5 — build update block
     torch_ref = f"{namespace}/{name}"
-    click.echo(f"\nCID: {cid}")
-    click.echo(f"\nManifest snippet:")
+    entries = {
+        torch_ref: {
+            version: torch_cid,
+            "latest": torch_cid,
+            "signatures": {version: cid_sig},
+        }
+    }
+    update_block = make_update_block(namespace, previous_cid, entries, signer)
+    block_toml_str = block_to_toml(update_block)
+
+    click.echo("Uploading update block ...")
+    try:
+        block_cid = upload_block(block_toml_str, ipfs_node, ipfs_port)
+        pin_cid(block_cid, ipfs_node, ipfs_port)
+    except Exception as e:
+        raise click.ClickException(f"Block upload failed: {e}")
+    click.echo(f"  block CID: {block_cid}")
+
+    # Step 6 — publish new chain head
+    click.echo("Publishing IPNS head ...")
+    try:
+        publish_chain_head(block_cid, namespace, ipfs_node, ipfs_port)
+    except Exception as e:
+        raise click.ClickException(f"IPNS publish failed: {e}")
+
+    # Step 7 — submit genesis CID to log operators
+    try:
+        chain = walk_chain(block_cid, ipfs_node, ipfs_port)
+        genesis_block_idx = next(
+            (i for i, b in enumerate(chain) if b.get("type") == "genesis"), None
+        )
+    except Exception:
+        chain = []
+        genesis_block_idx = None
+
+    all_log_urls = list(submit_to) + list(config.log_operators)
+    if all_log_urls and genesis_block_idx is not None:
+        # Walk chain to get genesis CID
+        from torchbase.chain import fetch_block, _kubo_url
+        # Re-walk to find genesis CID (walk_chain returns blocks, not CIDs)
+        cur = block_cid
+        while True:
+            blk = fetch_block(cur, ipfs_node, ipfs_port)
+            if blk.get("type") == "genesis":
+                genesis_cid_for_log = cur
+                break
+            cur = blk.get("previous", "")
+            if not cur:
+                genesis_cid_for_log = None
+                break
+        if genesis_cid_for_log:
+            for log_url in all_log_urls:
+                click.echo(f"Submitting to log: {log_url}")
+                try:
+                    submit_to_log(genesis_cid_for_log, namespace, ipns_address, log_url)
+                except Exception as e:
+                    click.echo(f"  Warning: log submission failed: {e}", err=True)
+
+    click.echo(f"\nPublished {torch_ref} {version}")
+    click.echo(f"  Torch CID: {torch_cid}")
+    click.echo(f"  Block CID: {block_cid}")
+    click.echo(f"  IPNS:      {ipns_address}")
+    click.echo(f"\nManifest entry (for reference):")
     click.echo(f'["{torch_ref}"]')
-    click.echo(f'"{version}" = "{cid}"')
-    click.echo(f'latest = "{cid}"')
+    click.echo(f'"{version}" = "{torch_cid}"')
+    click.echo(f'latest = "{torch_cid}"')
     click.echo(f'["{torch_ref}".signatures]')
     click.echo(f'"{version}" = "{cid_sig}"')
+
+
+@_manifest_group.command("show")
+@click.argument("namespace", required=True)
+@click.option("--ipfs-node", default="127.0.0.1", show_default=True)
+@click.option("--ipfs-port", default=5001, show_default=True, type=int)
+def _manifest_show(namespace, ipfs_node, ipfs_port):
+    """Walk the IPLD chain and print the reconstructed manifest as TOML."""
+    import toml as _toml
+    from torchbase.chain import get_chain_head, walk_chain, reconstruct_manifest
+    from torchbase.config import RegistryConfig
+
+    config = RegistryConfig.load()
+    ipns_address = config.namespaces.get(namespace)
+    if not ipns_address:
+        raise click.ClickException(
+            f"Namespace '{namespace}' not in config."
+        )
+
+    head_cid = get_chain_head(ipns_address, ipfs_node, ipfs_port)
+    if head_cid is None:
+        raise click.ClickException(f"Could not resolve IPNS for namespace '{namespace}'")
+
+    try:
+        chain = walk_chain(head_cid, ipfs_node, ipfs_port)
+    except ValueError as e:
+        raise click.ClickException(f"Chain verification failed: {e}")
+
+    manifest = reconstruct_manifest(chain)
+    if manifest:
+        click.echo(_toml.dumps(manifest))
+    else:
+        click.echo("# No torches published yet")
 
 
 @cli.command("verify")

@@ -75,6 +75,55 @@ class RegistryManager:
         if torch_name in self.config.pins:
             version = self.config.pins[torch_name]
 
+        # Check chain-based namespace registries first
+        namespace = torch_name.split("/")[0]
+        chain_ipns = getattr(self.config, "namespaces", {}).get(namespace)
+        if chain_ipns:
+            try:
+                manifest = self._fetch_chain_manifest(namespace, chain_ipns)
+                if torch_name in manifest:
+                    torch_versions = manifest[torch_name]
+                    if version is None:
+                        if "latest" in torch_versions:
+                            cid = torch_versions["latest"]
+                            resolved_version = next(
+                                (v for v, c in torch_versions.items()
+                                 if v not in ("latest", "signatures", "workflow")
+                                 and not isinstance(c, dict) and c == cid),
+                                None,
+                            )
+                        elif torch_versions:
+                            cid = next(
+                                c for k, c in torch_versions.items()
+                                if k not in ("signatures", "workflow")
+                                and not isinstance(c, dict)
+                            )
+                            resolved_version = next(
+                                k for k, c in torch_versions.items()
+                                if k not in ("signatures", "workflow")
+                                and not isinstance(c, dict)
+                            )
+                        else:
+                            resolved_version = None
+                            cid = None
+                    else:
+                        if version not in torch_versions:
+                            raise ValueError(
+                                f"Version {version} not found for {torch_name}"
+                            )
+                        cid = torch_versions[version]
+                        resolved_version = version
+
+                    if cid:
+                        self._verify_cid_signature(
+                            torch_name, resolved_version, cid, torch_versions, require_signature
+                        )
+                        return cid
+            except ValueError:
+                raise
+            except Exception:
+                pass
+
         # Try registries in order
         registries_to_try = []
         if self.config.default_registry:
@@ -194,6 +243,30 @@ class RegistryManager:
         """
         cid = self.resolve(torch_name, version=version, require_signature=require_signature)
         return self._cid_to_local_path(cid)
+
+    def _fetch_chain_manifest(self, namespace: str, ipns_address: str) -> Dict:
+        """Fetch and reconstruct a manifest from an IPLD commit chain.
+
+        Resolves *ipns_address* to the chain head CID, walks the chain,
+        verifies all block signatures, and returns a manifest dict in the
+        same format that _fetch_manifest() produces.
+
+        Args:
+            namespace: Namespace string (used for error messages).
+            ipns_address: IPNS address the namespace controls.
+
+        Returns:
+            Manifest dict (may be empty if no update blocks exist yet).
+        """
+        from torchbase.chain import get_chain_head, walk_chain, reconstruct_manifest
+        from torchbase.torchfs import node, port
+
+        head_cid = get_chain_head(ipns_address, node, port)
+        if head_cid is None:
+            return {}
+
+        chain = walk_chain(head_cid, node, port)
+        return reconstruct_manifest(chain)
 
     def _fetch_manifest(self, registry_url: str) -> Dict:
         """Fetch manifest from registry.
