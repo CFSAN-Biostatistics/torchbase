@@ -278,9 +278,19 @@ def convert_schemes(
     output_path = Path(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    _log.info("Converting %d scheme(s) from %s (cutoff: %s)", len(scheme_ids), database_url, cutoff_date)
-    client = BIGSdbClient(database_url)
-    database_name = _extract_database_name(database_url)
+    # If the user passed a full database URL (e.g. https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef)
+    # split into base URL and database name; otherwise fall back to simple extraction.
+    m = re.match(r'^(https?://[^/]+(?:/[^/]+)*)/db/([^/]+)/?$', database_url.rstrip('/'))
+    if m:
+        base_url = m.group(1)
+        database_name = m.group(2)
+    else:
+        base_url = database_url
+        database_name = _extract_database_name(database_url)
+
+    _log.info("Converting %d scheme(s) from %s/%s (cutoff: %s)",
+              len(scheme_ids), base_url, database_name, cutoff_date)
+    client = BIGSdbClient(base_url)
 
     # Version is derived from the cutoff date to make the data snapshot explicit.
     # e.g. cutoff_date=2024-12-31 → version "2024.12.31"
