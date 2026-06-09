@@ -10,7 +10,7 @@ Block formats
 Genesis block (namespace claim)::
 
     type       = "genesis"
-    namespace  = "cdc"
+    namespace  = "us-fda-hfp"
     public_key = "<base64url-ed25519-pubkey>"
     timestamp  = "2026-06-07T12:00:00+00:00"
     signature  = "<base64url>"
@@ -19,17 +19,17 @@ Genesis block (namespace claim)::
 Update block (torch publication)::
 
     type      = "update"
-    namespace = "cdc"
+    namespace = "us-fda-hfp"
     previous  = "<CID of previous block>"
     timestamp = "2026-06-07T12:00:00+00:00"
     signature = "<base64url>"
     # signs: "update:{namespace}:{previous}:{timestamp}:{sha256(entries_toml)}"
 
-    ["cdc/seqsero2"]
+    ["us-fda-hfp/seqsero2"]
     "2.0.0" = "<torch CID>"
     latest   = "<torch CID>"
 
-    ["cdc/seqsero2".signatures]
+    ["us-fda-hfp/seqsero2".signatures]
     "2.0.0" = "<base64url CID sig>"
 
 The entries section is the same format as the flat manifest TOML that
@@ -85,7 +85,7 @@ def make_genesis_block(namespace: str, signer) -> Dict:
     """Build and sign a genesis block for *namespace*.
 
     Args:
-        namespace: Namespace string (e.g. "cdc").
+        namespace: Namespace string (e.g. "us-fda-hfp").
         signer: A signer object with .sign(bytes)->bytes and
             .public_key_bytes()->bytes attributes.
 

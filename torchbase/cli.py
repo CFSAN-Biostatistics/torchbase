@@ -815,7 +815,8 @@ def convert(ctx, verbose):
     ctx.obj["verbosity"] = verbose
 
 @convert.command("pubmlst")
-@click.option("--url", required=True, help="PubMLST database API URL")
+@click.option("--url", default="https://rest.pubmlst.org", show_default=True,
+              help="PubMLST/BIGSdb REST API root URL")
 @click.option("--scheme-id", multiple=True, type=int,
               help="Scheme ID to include; repeat for multi-scheme torches. "
                    "Mutually exclusive with --all.")
@@ -930,7 +931,7 @@ def _pubcgmlst(ctx, scheme, sequences, output, namespace, name, version, kmer_si
 @convert.command("seqsero2")
 @click.argument("sequences", type=click.File(), nargs=-1)
 @click.option("--profiles", type=click.File(), default=None, help="Serotype definitions TSV (Serotype, O, H1, H2)")
-@click.option("--download", is_flag=True, default=False, help="Download FASTA files from CDCgov/SeqSero2")
+@click.option("--download", is_flag=True, default=False, help="Download FASTA files from denglab/SeqSero2")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="seqsero2", show_default=True, help="Torch name")
 @click.option("--version", default="1.0.0", show_default=True, help="Torch version")
@@ -1281,7 +1282,7 @@ def _namespace_group():
 
 
 @_namespace_group.command("register")
-@click.option("--namespace", required=True, help="Namespace to register (e.g. 'cdc')")
+@click.option("--namespace", required=True, help="Namespace to register (e.g. 'us-fda-hfp')")
 @click.option("--ipfs-node", default="127.0.0.1", show_default=True)
 @click.option("--ipfs-port", default=5001, show_default=True, type=int)
 @click.option("--submit-to", multiple=True, metavar="URL",

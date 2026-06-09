@@ -77,10 +77,10 @@ Extra options: `--namespace`, `--name` (defaults to scheme filename stem).
 
 ## Salmonella
 
-### `torchtools convert seqsero2` — SeqSero2 (CDCgov)
+### `torchtools convert seqsero2` — SeqSero2 (UGA Center for Food Safety / Deng lab)
 
 Serotypes *Salmonella* using wzx/wzy (O-antigen), fliC (H1), and fljB (H2)
-antigen loci. Corresponds to the [CDCgov/SeqSero2](https://github.com/CDCgov/SeqSero2)
+antigen loci. Corresponds to the [UGA Center for Food Safety / Deng lab](https://github.com/denglab/SeqSero2)
 database.
 
 ```
@@ -252,26 +252,26 @@ leaves hardware).
 **Software key (default):**
 
 ```
-torchtools keygen --namespace cdc
+torchtools keygen --namespace us-fda-hfp
 ```
 
-Writes `~/.torchbase/keys/cdc.key` (mode 0600) and `~/.torchbase/keys/cdc.pub`.
+Writes `~/.torchbase/keys/us-fda-hfp.key` (mode 0600) and `~/.torchbase/keys/us-fda-hfp.pub`.
 The public key is printed at the end — add it to your key registry TOML.
 
 **YubiKey PIV:**
 
 ```
-torchtools keygen --namespace cdc --yubikey [--slot 9c] [--pin <pin>]
+torchtools keygen --namespace us-fda-hfp --yubikey [--slot 9c] [--pin <pin>]
 ```
 
 Generates a key on the PIV slot (default `9c`) and exports the public key to
-`~/.torchbase/keys/cdc.pub`. The private key never leaves the device.
+`~/.torchbase/keys/us-fda-hfp.pub`. The private key never leaves the device.
 
 ### Signing a torch
 
 ```
-torchtools sign ./torches/cdc/seqsero2/1.0.0.torch
-torchtools sign ./torches/cdc/seqsero2/1.0.0.torch --yubikey [--slot 9c] [--pin <pin>]
+torchtools sign ./torches/us-fda-hfp/seqsero2/1.0.0.torch
+torchtools sign ./torches/us-fda-hfp/seqsero2/1.0.0.torch --yubikey [--slot 9c] [--pin <pin>]
 ```
 
 Writes `signature.toml` inside the torch directory. Signing is idempotent —
@@ -280,28 +280,28 @@ re-running produces a new signature over the same content.
 ### Publishing (sign + IPFS add + sign CID)
 
 ```
-torchtools publish ./torches/cdc/seqsero2/1.0.0.torch
-torchtools publish ./torches/cdc/seqsero2/1.0.0.torch --yubikey
+torchtools publish ./torches/us-fda-hfp/seqsero2/1.0.0.torch
+torchtools publish ./torches/us-fda-hfp/seqsero2/1.0.0.torch --yubikey
 ```
 
 Chains three steps: signs the torch content, uploads to IPFS, then signs the
 resulting CID. Prints a manifest snippet ready to paste into your registry:
 
 ```toml
-["cdc/seqsero2"]
+["us-fda-hfp/seqsero2"]
 "1.0.0" = "QmABC..."
 latest   = "QmABC..."
 
-["cdc/seqsero2".signatures]
+["us-fda-hfp/seqsero2".signatures]
 "1.0.0" = "base64url-encoded-signature"
 ```
 
 ### Verifying a torch
 
 ```
-torchbase verify ./torches/cdc/seqsero2/1.0.0.torch
-torchbase verify ./torches/cdc/seqsero2/1.0.0.torch --public-key <base64url-key>
-torchbase verify ./torches/cdc/seqsero2/1.0.0.torch --require-signature
+torchbase verify ./torches/us-fda-hfp/seqsero2/1.0.0.torch
+torchbase verify ./torches/us-fda-hfp/seqsero2/1.0.0.torch --public-key <base64url-key>
+torchbase verify ./torches/us-fda-hfp/seqsero2/1.0.0.torch --require-signature
 ```
 
 Recomputes the content hash, checks it matches `signature.toml`, and verifies
@@ -322,8 +322,8 @@ Publish a TOML file (via IPFS/IPNS or HTTP) mapping namespaces to public keys:
 
 ```toml
 [keys]
-cdc      = "base64url-pubkey..."
-pubmlst  = "base64url-pubkey..."
+us-fda-hfp = "base64url-pubkey..."
+pubmlst    = "base64url-pubkey..."
 ```
 
 Reference it in `~/.torchbase/config.toml`:
@@ -336,7 +336,7 @@ key_registries = ["/ipns/k51q...yourname"]
 key_cache_ttl_hours = 24   # optional, default 24
 
 [trusted_keys]
-cdc = "base64url-pubkey..."  # inline fallback, no network needed
+us-fda-hfp = "base64url-pubkey..."  # inline fallback, no network needed
 ```
 
 The registry is fetched once and cached at `~/.torchbase/key_cache.toml`;
@@ -355,15 +355,15 @@ every forward CID link.
 
 ```
 # 1. Generate an Ed25519 key for your namespace
-torchtools keygen --namespace cdc
+torchtools keygen --namespace us-fda-hfp
 
 # 2. Register the namespace (creates genesis block, publishes to IPNS)
-torchtools namespace register --namespace cdc
+torchtools namespace register --namespace us-fda-hfp
 ```
 
 `namespace register` does the following:
 
-1. Imports your Ed25519 PEM key into Kubo's keystore as the key named `cdc`
+1. Imports your Ed25519 PEM key into Kubo's keystore as the key named `us-fda-hfp`
 2. Creates and signs a genesis block (namespace claim)
 3. Uploads the genesis block to IPFS and pins it
 4. Publishes the genesis CID to IPNS under your key
@@ -372,7 +372,7 @@ torchtools namespace register --namespace cdc
 
 ```toml
 [namespaces]
-"cdc" = "/ipns/k51q..."
+"us-fda-hfp" = "/ipns/k51q..."
 ```
 
 Share that config snippet with collaborators so they can resolve your torches.
@@ -380,7 +380,7 @@ Share that config snippet with collaborators so they can resolve your torches.
 ### Publishing a torch
 
 ```
-torchtools manifest add ./torches/cdc/seqsero2/2.0.0.torch
+torchtools manifest add ./torches/us-fda-hfp/seqsero2/2.0.0.torch
 ```
 
 Steps executed:
@@ -393,16 +393,16 @@ Steps executed:
 
 ```toml
 type      = "update"
-namespace = "cdc"
+namespace = "us-fda-hfp"
 previous  = "<previous block CID>"
 timestamp = "2026-06-07T12:00:00+00:00"
 signature = "<base64url>"
 
-["cdc/seqsero2"]
+["us-fda-hfp/seqsero2"]
 "2.0.0" = "<torch CID>"
 latest   = "<torch CID>"
 
-["cdc/seqsero2".signatures]
+["us-fda-hfp/seqsero2".signatures]
 "2.0.0" = "<base64url CID signature>"
 ```
 
@@ -415,18 +415,18 @@ manifest TOML entry for reference.
 ### YubiKey signing
 
 ```
-torchtools namespace register --namespace cdc --yubikey --slot 9c
-torchtools manifest add ./torches/cdc/seqsero2/2.0.0.torch --yubikey --slot 9c
+torchtools namespace register --namespace us-fda-hfp --yubikey --slot 9c
+torchtools manifest add ./torches/us-fda-hfp/seqsero2/2.0.0.torch --yubikey --slot 9c
 ```
 
 ### Inspecting a namespace chain
 
 ```
 # Print reconstructed manifest (walks chain, verifies all sigs)
-torchtools manifest show cdc
+torchtools manifest show us-fda-hfp
 
 # More detail including block count and genesis public key
-torchtools namespace show cdc
+torchtools namespace show us-fda-hfp
 ```
 
 Both commands fail loudly if any block signature is invalid or if the chain has
@@ -438,7 +438,7 @@ Once the IPNS address is in a collaborator's `~/.torchbase/config.toml`,
 `torchbase pull` resolves from the chain automatically:
 
 ```
-torchbase pull cdc/seqsero2
+torchbase pull us-fda-hfp/seqsero2
 ```
 
 Resolution order:
@@ -463,8 +463,8 @@ log_operators = [
 Or pass `--submit-to` on any publish command:
 
 ```
-torchtools namespace register --namespace cdc --submit-to https://log.example.org/submit
-torchtools manifest add ./torches/cdc/seqsero2/2.0.0.torch --submit-to https://log.example.org/submit
+torchtools namespace register --namespace us-fda-hfp --submit-to https://log.example.org/submit
+torchtools manifest add ./torches/us-fda-hfp/seqsero2/2.0.0.torch --submit-to https://log.example.org/submit
 ```
 
 ---

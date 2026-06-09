@@ -30,11 +30,11 @@ _log = get_logger("seqsero2")
 TAXA = ["Salmonella"]
 
 DOWNLOAD_SOURCES = {
-    "repo": "https://github.com/CDCgov/SeqSero2",
+    "repo": "https://github.com/denglab/SeqSero2",
     "sequences": [
-        ("wzx_wzy.fasta",  "https://raw.githubusercontent.com/CDCgov/SeqSero2/master/SeqSero2_package/data/Otype_variable_region.fasta"),
-        ("fliC.fasta",     "https://raw.githubusercontent.com/CDCgov/SeqSero2/master/SeqSero2_package/data/H1_fliC_variant.fasta"),
-        ("fljB.fasta",     "https://raw.githubusercontent.com/CDCgov/SeqSero2/master/SeqSero2_package/data/H2_fljB_variant.fasta"),
+        ("wzx_wzy.fasta",  "https://raw.githubusercontent.com/denglab/SeqSero2/master/SeqSero2_package/data/Otype_variable_region.fasta"),
+        ("fliC.fasta",     "https://raw.githubusercontent.com/denglab/SeqSero2/master/SeqSero2_package/data/H1_fliC_variant.fasta"),
+        ("fljB.fasta",     "https://raw.githubusercontent.com/denglab/SeqSero2/master/SeqSero2_package/data/H2_fljB_variant.fasta"),
     ],
     # Serotype profiles are compiled from NCBI / literature data and are not
     # available as a simple download from the repo. Provide --profiles manually.
