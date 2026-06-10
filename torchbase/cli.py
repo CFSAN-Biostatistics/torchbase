@@ -670,50 +670,146 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         if isinstance(workflow_file, str):
             workflow_file = Path(workflow_file)
 
-        # Map torch file params to workflow-specific names
-        workflow_name = workflow_file.stem if isinstance(workflow_file, Path) else Path(workflow_file).stem
+        # Handle embedded workflows with dynamic parameter parsing
+        if data_torch.workflow:
+            from torchbase.workflow_inspect import WDLParser
+            from torchbase.workflow_params import (
+                parse_torch_args,
+                auto_provision_torch_parameters,
+                validate_required_parameters
+            )
 
-        if workflow_name == 'fast_typing':
-            torch_params = ['allele_database=' + str(allele_fasta_path),
-                            'profiles_table=' + str(profiles_table_path)]
-        elif workflow_name == 'sensitive_typing':
-            torch_params = ['allele_database=' + str(allele_fasta_path),
-                            'profiles=' + str(profiles_table_path)]
-        else:  # balanced_typing or custom
-            torch_params = ['allele_fasta=' + str(allele_fasta_path),
-                            'profiles_table=' + str(profiles_table_path)]
+            # Parse the embedded WDL to extract parameter schema
+            try:
+                with open(workflow_file) as wf:
+                    parser = WDLParser(wf.read(), wdl_dir=workflow_file.parent)
+            except (FileNotFoundError, IOError) as e:
+                raise click.ClickException(f"Failed to read workflow file {workflow_file}: {str(e)}")
+            except ValueError as e:
+                # WDL parsing failed - workflow may have invalid syntax
+                # Fall back to non-parametric invocation for backward compatibility
+                click.echo(f"Warning: Could not parse workflow parameters: {str(e)}", err=True)
+                click.echo(f"Falling back to basic workflow invocation.", err=True)
 
-        # Build miniwdl command
-        miniwdl_cmd = ['miniwdl', 'run', str(workflow_file)]
+                # Build basic miniwdl command without parameter validation
+                miniwdl_cmd = ['miniwdl', 'run', str(workflow_file)]
 
-        # Add input files
-        if contigs:
-            miniwdl_cmd.extend(['contigs=' + str(contigs)])
-        if reads:
-            miniwdl_cmd.extend(['reads=' + str(reads)])
-        if paired1 and paired2:
-            miniwdl_cmd.extend(['paired1=' + str(paired1), 'paired2=' + str(paired2)])
-        if interlaced:
-            miniwdl_cmd.extend(['interlaced=' + str(interlaced)])
-        if longreads:
-            miniwdl_cmd.extend(['longreads=' + str(longreads)])
+                # Add all input files and torch args as-is
+                if contigs:
+                    miniwdl_cmd.append(f'contigs={contigs._original_path if hasattr(contigs, "_original_path") else contigs}')
+                if reads:
+                    miniwdl_cmd.append(f'reads={reads._original_path if hasattr(reads, "_original_path") else reads}')
+                if paired1 and paired2:
+                    miniwdl_cmd.extend([f'paired1={paired1._original_path if hasattr(paired1, "_original_path") else paired1}',
+                                       f'paired2={paired2._original_path if hasattr(paired2, "_original_path") else paired2}'])
+                if interlaced:
+                    miniwdl_cmd.append(f'interlaced={interlaced._original_path if hasattr(interlaced, "_original_path") else interlaced}')
+                if longreads:
+                    miniwdl_cmd.append(f'longreads={longreads._original_path if hasattr(longreads, "_original_path") else longreads}')
 
-        # Add torch data files (required by all workflows)
-        miniwdl_cmd.extend(torch_params)
+                # Execute and return early
+                result = run(miniwdl_cmd)
+                if result.returncode != 0:
+                    raise click.ClickException(f"Workflow execution failed with code {result.returncode}")
+                return result
 
-        # Add auto decision rationale if available
-        if auto_decision_rationale:
-            miniwdl_cmd.extend(['auto_decision=' + auto_decision_rationale])
+            # Auto-provision torch data files
+            auto_params = auto_provision_torch_parameters(
+                parser.workflow_inputs,
+                allele_fasta_path,
+                profiles_table_path
+            )
 
-        # Add quality.json and suspect data flags
-        if quality_json:
-            miniwdl_cmd.extend(['quality_json=' + str(quality_json)])
-        if allele_filter == "exclude":
-            miniwdl_cmd.append('exclude_suspect_alleles=true')
-        if exclude_suspect_loci:
-            miniwdl_cmd.append('exclude_suspect_loci=true')
-        if exclude_suspect_profiles:
-            miniwdl_cmd.append('exclude_suspect_profiles=true')
+            # Parse user-provided parameters from torch_args
+            try:
+                user_params = parse_torch_args(torch_args)
+            except ValueError as e:
+                raise click.ClickException(str(e))
+
+            # Merge: user parameters override auto-provisioned
+            all_params = {**auto_params, **user_params}
+
+            # Add sequence input (user provided via -c/-r/etc)
+            if contigs:
+                all_params['query_sequences'] = str(contigs._original_path if hasattr(contigs, '_original_path') else contigs)
+            elif reads:
+                all_params['query_sequences'] = str(reads._original_path if hasattr(reads, '_original_path') else reads)
+            elif paired1:
+                all_params['query_sequences'] = str(paired1._original_path if hasattr(paired1, '_original_path') else paired1)
+            elif interlaced:
+                all_params['query_sequences'] = str(interlaced._original_path if hasattr(interlaced, '_original_path') else interlaced)
+            elif longreads:
+                all_params['query_sequences'] = str(longreads._original_path if hasattr(longreads, '_original_path') else longreads)
+
+            # Add optional parameters if provided via existing flags
+            if quality_json:
+                all_params['quality_json'] = str(quality_json)
+            if allele_filter == "exclude":
+                all_params['exclude_suspect_alleles'] = 'true'
+            if exclude_suspect_loci:
+                all_params['exclude_suspect_loci'] = 'true'
+            if exclude_suspect_profiles:
+                all_params['exclude_suspect_profiles'] = 'true'
+
+            # Validate required parameters
+            errors = validate_required_parameters(parser.workflow_inputs, all_params)
+            if errors:
+                raise click.ClickException(
+                    f"Missing required workflow parameters:\n" + "\n".join(errors) +
+                    f"\n\nRun 'torchbase workflow inspect {torch}' to see available parameters."
+                )
+
+            # Build miniwdl command with all parameters
+            miniwdl_cmd = ['miniwdl', 'run', str(workflow_file)]
+            for key, value in all_params.items():
+                miniwdl_cmd.append(f'{key}={value}')
+
+        else:
+            # Built-in workflow handling (original code path)
+            # Map torch file params to workflow-specific names
+            workflow_name = workflow_file.stem if isinstance(workflow_file, Path) else Path(workflow_file).stem
+
+            if workflow_name == 'fast_typing':
+                torch_params = ['allele_database=' + str(allele_fasta_path),
+                                'profiles_table=' + str(profiles_table_path)]
+            elif workflow_name == 'sensitive_typing':
+                torch_params = ['allele_database=' + str(allele_fasta_path),
+                                'profiles=' + str(profiles_table_path)]
+            else:  # balanced_typing or custom
+                torch_params = ['allele_fasta=' + str(allele_fasta_path),
+                                'profiles_table=' + str(profiles_table_path)]
+
+            # Build miniwdl command
+            miniwdl_cmd = ['miniwdl', 'run', str(workflow_file)]
+
+            # Add input files
+            if contigs:
+                miniwdl_cmd.extend(['contigs=' + str(contigs)])
+            if reads:
+                miniwdl_cmd.extend(['reads=' + str(reads)])
+            if paired1 and paired2:
+                miniwdl_cmd.extend(['paired1=' + str(paired1), 'paired2=' + str(paired2)])
+            if interlaced:
+                miniwdl_cmd.extend(['interlaced=' + str(interlaced)])
+            if longreads:
+                miniwdl_cmd.extend(['longreads=' + str(longreads)])
+
+            # Add torch data files (required by all workflows)
+            miniwdl_cmd.extend(torch_params)
+
+            # Add auto decision rationale if available
+            if auto_decision_rationale:
+                miniwdl_cmd.extend(['auto_decision=' + auto_decision_rationale])
+
+            # Add quality.json and suspect data flags
+            if quality_json:
+                miniwdl_cmd.extend(['quality_json=' + str(quality_json)])
+            if allele_filter == "exclude":
+                miniwdl_cmd.append('exclude_suspect_alleles=true')
+            if exclude_suspect_loci:
+                miniwdl_cmd.append('exclude_suspect_loci=true')
+            if exclude_suspect_profiles:
+                miniwdl_cmd.append('exclude_suspect_profiles=true')
 
         # Execute workflow
         result = run(miniwdl_cmd)
