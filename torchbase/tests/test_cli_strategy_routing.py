@@ -13,6 +13,7 @@ Acceptance criteria:
 import pytest
 import toml
 import csv
+from pathlib import Path
 from click.testing import CliRunner
 from unittest.mock import patch, MagicMock
 
@@ -161,6 +162,10 @@ class TestDefaultStrategy:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -223,6 +228,10 @@ class TestStrategyRouting:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -251,6 +260,10 @@ class TestStrategyRouting:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -279,6 +292,10 @@ class TestStrategyRouting:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -307,6 +324,10 @@ class TestStrategyRouting:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -338,6 +359,10 @@ class TestStrategyWithEmbeddedWorkflowError:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_embedded_workflow / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                torch_with_embedded_workflow / "alleles.fasta",
+                torch_with_embedded_workflow / "profiles.tsv"
+            )
             mock_torch_class.load.return_value = mock_torch
 
             result = runner.invoke(
@@ -364,6 +389,10 @@ class TestStrategyWithEmbeddedWorkflowError:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_embedded_workflow / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                torch_with_embedded_workflow / "alleles.fasta",
+                torch_with_embedded_workflow / "profiles.tsv"
+            )
             mock_torch_class.load.return_value = mock_torch
 
             result = runner.invoke(
@@ -414,6 +443,10 @@ class TestStrategyWithEmbeddedWorkflowError:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_embedded_workflow / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                torch_with_embedded_workflow / "alleles.fasta",
+                torch_with_embedded_workflow / "profiles.tsv"
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -499,6 +532,10 @@ class TestStrategyWorkflowPathResolution:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -531,6 +568,10 @@ class TestStrategyWorkflowPathResolution:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -559,6 +600,10 @@ class TestStrategyWorkflowPathResolution:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -591,6 +636,10 @@ class TestStrategyWithoutTorchWorkflow:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                torch_without_workflow / "alleles.fasta",
+                torch_without_workflow / "profiles.tsv"
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -680,6 +729,10 @@ class TestStrategyIntegrationWithMultiScheme:
                 "ecoli": MagicMock(),
                 "salmonella": MagicMock()
             }
+            mock_torch.get_unified_files.return_value = (
+                torch_path / "alleles.fasta",
+                torch_path / "profiles.tsv"
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -762,6 +815,10 @@ class TestStrategyErrorHandling:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = None
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             # Mock workflow file as missing
@@ -896,6 +953,10 @@ class TestStrategyWorkflowDiscoveryInteraction:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_path / "custom.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             result = runner.invoke(

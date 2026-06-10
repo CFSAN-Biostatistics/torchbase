@@ -568,6 +568,12 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         # Load data torch
         data_torch = Torch.load(torch)
 
+        # Generate unified torch data files for workflow
+        try:
+            allele_fasta_path, profiles_table_path = data_torch.get_unified_files()
+        except Exception as e:
+            raise click.ClickException(f"Failed to generate torch data files: {str(e)}")
+
         # Check for conflict: --strategy cannot be used with embedded workflows
         # Check if user explicitly specified --strategy via the callback flag
         user_specified_strategy = clx.obj.get('_strategy_explicit', False) if clx.obj else False
@@ -664,6 +670,19 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         if isinstance(workflow_file, str):
             workflow_file = Path(workflow_file)
 
+        # Map torch file params to workflow-specific names
+        workflow_name = workflow_file.stem if isinstance(workflow_file, Path) else Path(workflow_file).stem
+
+        if workflow_name == 'fast_typing':
+            torch_params = ['allele_database=' + str(allele_fasta_path),
+                            'profiles_table=' + str(profiles_table_path)]
+        elif workflow_name == 'sensitive_typing':
+            torch_params = ['allele_database=' + str(allele_fasta_path),
+                            'profiles=' + str(profiles_table_path)]
+        else:  # balanced_typing or custom
+            torch_params = ['allele_fasta=' + str(allele_fasta_path),
+                            'profiles_table=' + str(profiles_table_path)]
+
         # Build miniwdl command
         miniwdl_cmd = ['miniwdl', 'run', str(workflow_file)]
 
@@ -678,6 +697,9 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             miniwdl_cmd.extend(['interlaced=' + str(interlaced)])
         if longreads:
             miniwdl_cmd.extend(['longreads=' + str(longreads)])
+
+        # Add torch data files (required by all workflows)
+        miniwdl_cmd.extend(torch_params)
 
         # Add auto decision rationale if available
         if auto_decision_rationale:
@@ -705,6 +727,12 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         raise
     except Exception as e:
         raise click.ClickException(f"Error running workflow: {str(e)}")
+    finally:
+        # Clean up temporary torch files
+        if 'allele_fasta_path' in locals() and allele_fasta_path.exists():
+            allele_fasta_path.unlink()
+        if 'profiles_table_path' in locals() and profiles_table_path.exists():
+            profiles_table_path.unlink()
 
 
 
@@ -721,6 +749,55 @@ def tools(verbose=0):
                         format='[%(asctime)s][%(name)-12s][%(levelname)-8s] %(message)s',
                         datefmt='%m-%d %H:%M')
     pass
+
+@tools.command("compress")
+@click.argument("torch_path", type=click.Path(exists=True, dir_okay=True))
+@click.option("--level", default=3, type=click.IntRange(1, 22), show_default=True,
+              help="Zstandard compression level (higher = better compression, slower)")
+@click.option("--keep-original", is_flag=True,
+              help="Keep original .fasta files after compressing")
+def compress_torch_alleles(torch_path, level, keep_original):
+    """Compress FASTA allele files in torch to .fasta.zst format.
+
+    Compresses all .fasta files in _resources/ or schemes/*/alleles/.
+    Skips already-compressed files. Idempotent.
+    """
+    torch_path = Path(torch_path)
+    cctx = zstd.ZstdCompressor(level=level)
+    compressed_count = 0
+
+    # Find all FASTA files
+    fasta_files = []
+
+    # Single-scheme format
+    resources = torch_path / "_resources"
+    if resources.exists():
+        fasta_files.extend(resources.glob("*.fasta"))
+
+    # Multi-scheme format
+    schemes_dir = torch_path / "schemes"
+    if schemes_dir.exists():
+        fasta_files.extend(schemes_dir.glob("*/alleles/*.fasta"))
+
+    for fasta_file in fasta_files:
+        output_file = fasta_file.with_suffix(fasta_file.suffix + '.zst')
+
+        if output_file.exists():
+            click.echo(f"Skip {fasta_file.name} (already compressed)")
+            continue
+
+        with open(fasta_file, 'rb') as in_f:
+            with open(output_file, 'wb') as out_f:
+                cctx.copy_stream(in_f, out_f)
+
+        if not keep_original:
+            fasta_file.unlink()
+
+        compressed_count += 1
+        click.echo(f"Compressed {fasta_file.name} → {output_file.name}")
+
+    click.echo(f"\nCompressed {compressed_count} files at level {level}")
+
 
 @tools.command("call", context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
 @click.argument("schema", type=click.File(), nargs=1)

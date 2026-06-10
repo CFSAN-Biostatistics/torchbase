@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Tuple, Dict, Optional, Union
 import tempfile
+import zstandard
+import io
 
 from torchbase.torchbase import Profile, Schema
 
@@ -14,6 +16,46 @@ node = environ.get("TORCHBASE_IPFS_NODE", "localhost")
 port = environ.get("TORCHBASE_IPFS_PORT", 5001)
 
 TORCHBASE_REGISTRY_HASH = ""  # IPFS hash for registry file
+
+
+def _open_fasta_file(path: Path, mode='r'):
+    """Open FASTA file with transparent zstd decompression.
+
+    Detects compression by extension (.fasta.zst) or magic bytes (0x28b52ffd).
+    Returns text-mode file handle for streaming reads.
+
+    Args:
+        path: Path to FASTA file (compressed or uncompressed)
+        mode: File mode (only 'r' supported)
+
+    Returns:
+        Text-mode file handle
+
+    Raises:
+        ValueError: If mode != 'r'
+    """
+    if mode != 'r':
+        raise ValueError("Only read mode supported")
+
+    # Check extension first (fast path)
+    if path.suffix == '.zst' or path.name.endswith('.fasta.zst'):
+        dctx = zstandard.ZstdDecompressor()
+        compressed = open(path, 'rb')
+        reader = dctx.stream_reader(compressed)
+        return io.TextIOWrapper(reader, encoding='utf-8')
+
+    # Check magic bytes for misnamed files
+    with open(path, 'rb') as f:
+        magic = f.read(4)
+
+    if magic == b'\x28\xb5\x2f\xfd':  # zstd magic
+        dctx = zstandard.ZstdDecompressor()
+        compressed = open(path, 'rb')
+        reader = dctx.stream_reader(compressed)
+        return io.TextIOWrapper(reader, encoding='utf-8')
+
+    # Uncompressed fallback
+    return open(path, 'r', encoding='utf-8')
 
 
 def _kubo_url(node, port):
@@ -386,7 +428,7 @@ class Torch:
 
                 # Process each allele file in the scheme
                 for allele_file in sorted(allele_files):
-                    with open(allele_file, 'r') as in_f:
+                    with _open_fasta_file(allele_file) as in_f:
                         for line in in_f:
                             line = line.rstrip('\n')
                             if line.startswith('>'):
@@ -407,7 +449,7 @@ class Torch:
         """
         with open(output_path, 'w') as out_f:
             for ref_file in sorted(self.references):
-                with open(ref_file, 'r') as in_f:
+                with _open_fasta_file(ref_file) as in_f:
                     out_f.write(in_f.read())
 
     def transform_profiles(self) -> Path:

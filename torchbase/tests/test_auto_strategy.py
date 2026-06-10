@@ -779,6 +779,10 @@ class TestAutoStrategyWithEmbeddedWorkflows:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_path / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                torch_path / "alleles.fasta",
+                torch_path / "profiles.tsv"
+            )
             mock_torch_class.load.return_value = mock_torch
 
             result = runner.invoke(

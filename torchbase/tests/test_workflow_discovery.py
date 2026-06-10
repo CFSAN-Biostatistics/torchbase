@@ -238,6 +238,10 @@ class TestWorkflowNamingValidation:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_wrong_wdl_name / "workflow.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             # This should fail validation
@@ -275,6 +279,10 @@ class TestDefaultWorkflowFallback:
                 mock_data_torch = MagicMock()
                 mock_data_torch.workflow = None
                 mock_data_torch.path = torch_without_main_wdl
+                mock_data_torch.get_unified_files.return_value = (
+                    torch_without_main_wdl / "alleles.fasta",
+                    torch_without_main_wdl / "profiles.tsv"
+                )
 
                 # Mock default workflow torch
                 mock_default_torch = MagicMock()
@@ -282,6 +290,10 @@ class TestDefaultWorkflowFallback:
                     "/tmp/workflows/default-workflow/1.0.0.torch/main.wdl"
                 )
                 mock_default_torch.workflow = default_wdl
+                mock_default_torch.get_unified_files.return_value = (
+                    Path("/tmp/alleles.fasta"),
+                    Path("/tmp/profiles.tsv")
+                )
 
                 # Configure mock to return different torches
                 def load_side_effect(path):
@@ -389,6 +401,10 @@ class TestWorkflowOverride:
                 # Mock custom workflow torch
                 mock_custom_torch = MagicMock()
                 mock_custom_torch.workflow = Path("/tmp/custom/workflow/main.wdl")
+                mock_custom_torch.get_unified_files.return_value = (
+                    Path("/tmp/alleles.fasta"),
+                    Path("/tmp/profiles.tsv")
+                )
 
                 def load_side_effect(path):
                     if "custom" in str(path):
@@ -426,6 +442,10 @@ class TestWorkflowOverride:
             with patch('torchbase.registry.RegistryManager') as mock_manager_class:
                 mock_torch = MagicMock()
                 mock_torch.workflow = Path("/tmp/workflow/main.wdl")
+                mock_torch.get_unified_files.return_value = (
+                    Path("/tmp/alleles.fasta"),
+                    Path("/tmp/profiles.tsv")
+                )
                 mock_torch_class.load.return_value = mock_torch
 
                 mock_manager = MagicMock()
@@ -459,6 +479,10 @@ class TestWorkflowOverride:
             with patch('torchbase.registry.RegistryManager') as mock_manager_class:
                 mock_data_torch = MagicMock()
                 mock_data_torch.workflow = None
+                mock_data_torch.get_unified_files.return_value = (
+                    Path("/tmp/alleles.fasta"),
+                    Path("/tmp/profiles.tsv")
+                )
 
                 mock_custom_workflow = MagicMock()
                 mock_custom_workflow.workflow = Path("/tmp/custom/main.wdl")
@@ -503,6 +527,10 @@ class TestMiniwdlExecution:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -525,6 +553,10 @@ class TestMiniwdlExecution:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -557,6 +589,10 @@ class TestMiniwdlExecution:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -582,6 +618,10 @@ class TestMiniwdlExecution:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -610,6 +650,10 @@ class TestOutputHandling:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -636,6 +680,10 @@ class TestOutputHandling:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -662,6 +710,10 @@ class TestOutputHandling:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -692,6 +744,10 @@ class TestErrorHandling:
             with patch('torchbase.registry.RegistryManager') as mock_manager_class:
                 mock_torch = MagicMock()
                 mock_torch.workflow = None
+                mock_torch.get_unified_files.return_value = (
+                    Path("/tmp/alleles.fasta"),
+                    Path("/tmp/profiles.tsv")
+                )
                 mock_torch_class.load.return_value = mock_torch
 
                 # Mock registry manager to fail
@@ -716,6 +772,10 @@ class TestErrorHandling:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -757,6 +817,10 @@ class TestErrorHandling:
             with patch('torchbase.registry.RegistryManager') as mock_manager_class:
                 mock_torch = MagicMock()
                 mock_torch.workflow = None
+                mock_torch.get_unified_files.return_value = (
+                    Path("/tmp/alleles.fasta"),
+                    Path("/tmp/profiles.tsv")
+                )
                 mock_torch_class.load.return_value = mock_torch
 
                 mock_manager = MagicMock()
@@ -788,6 +852,10 @@ class TestErrorHandling:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_with_main_wdl / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -838,6 +906,10 @@ class TestWorkflowDiscoveryEdgeCases:
         with patch('torchbase.torchfs.Torch') as mock_torch_class:
             mock_torch = MagicMock()
             mock_torch.workflow = torch_path / "main.wdl"
+            mock_torch.get_unified_files.return_value = (
+                Path("/tmp/alleles.fasta"),
+                Path("/tmp/profiles.tsv")
+            )
             mock_torch_class.load.return_value = mock_torch
 
             with patch('torchbase.cli.run') as mock_run:
@@ -878,6 +950,10 @@ class TestWorkflowDiscoveryEdgeCases:
             with patch('torchbase.registry.RegistryManager') as mock_manager_class:
                 mock_torch = MagicMock()
                 mock_torch.workflow = None
+                mock_torch.get_unified_files.return_value = (
+                    Path("/tmp/alleles.fasta"),
+                    Path("/tmp/profiles.tsv")
+                )
                 mock_torch_class.load.return_value = mock_torch
 
                 mock_manager = MagicMock()
