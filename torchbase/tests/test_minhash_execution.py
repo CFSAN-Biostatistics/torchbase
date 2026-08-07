@@ -64,7 +64,7 @@ class TestSourmashSketch:
             assert csv_out.exists()
 
             import csv
-            with open(csv_out) as f:
+            with open(csv_out, newline="") as f:
                 rows = list(csv.reader(f))
             # Diagonal (self-similarity) should be 1.0
             assert len(rows) >= 2
@@ -104,7 +104,7 @@ class TestSourmashSketch:
             )
             assert result.returncode == 0, result.stderr
             import csv
-            with open(csv_out) as f:
+            with open(csv_out, newline="") as f:
                 rows = list(csv.reader(f))
             # Off-diagonal similarity should be < 0.9
             assert len(rows) >= 2

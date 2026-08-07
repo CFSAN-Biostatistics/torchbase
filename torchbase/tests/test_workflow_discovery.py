@@ -56,7 +56,7 @@ def torch_with_main_wdl(tmp_path):
 
     # Create profiles.tsv
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -87,7 +87,7 @@ def torch_without_main_wdl(tmp_path):
 
     # Create profiles.tsv
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -122,7 +122,7 @@ def torch_with_wrong_wdl_name(tmp_path):
 
     # Create profiles.tsv
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -166,7 +166,7 @@ def default_workflow_torch(tmp_path):
 
     # Create profiles.tsv
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -895,7 +895,7 @@ class TestWorkflowDiscoveryEdgeCases:
         (torch_path / "main.wdl").touch()
 
         profiles = [["ST", "adk"], ["1", "1"]]
-        with open(torch_path / "profiles.tsv", "w") as f:
+        with open(torch_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 

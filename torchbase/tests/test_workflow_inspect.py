@@ -119,7 +119,7 @@ task align_sequences {
 
     # Create minimal profiles.tsv
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -154,7 +154,7 @@ def torch_with_malformed_wdl(tmp_path):
 
     # Create minimal profiles.tsv
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -298,7 +298,7 @@ class TestWorkflowInspectTorchPaths:
             toml.dump(metadata, f)
 
         profiles = [["ST", "adk"], ["1", "1"]]
-        with open(torch_path / "profiles.tsv", "w") as f:
+        with open(torch_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 
@@ -628,7 +628,7 @@ workflow test {
             f.write(wdl_with_import)
 
         profiles = [["ST", "adk"], ["1", "1"]]
-        with open(torch_path / "profiles.tsv", "w") as f:
+        with open(torch_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 
@@ -705,7 +705,7 @@ workflow empty_workflow {
             f.write(wdl_content)
 
         profiles = [["ST", "adk"], ["1", "1"]]
-        with open(torch_path / "profiles.tsv", "w") as f:
+        with open(torch_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 

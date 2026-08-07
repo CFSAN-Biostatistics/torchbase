@@ -40,7 +40,7 @@ def torch_without_workflow(tmp_path):
         toml.dump(metadata, f)
 
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -80,7 +80,7 @@ def torch_with_embedded_workflow(tmp_path):
         f.write(wdl_content)
 
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -712,7 +712,7 @@ class TestStrategyIntegrationWithMultiScheme:
             scheme_path.mkdir(parents=True)
 
             profiles = [["ST", "locus1"], ["1", "1"]]
-            with open(scheme_path / "profiles.tsv", "w") as f:
+            with open(scheme_path / "profiles.tsv", "w", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
                 writer.writerows(profiles)
 
@@ -776,7 +776,7 @@ class TestStrategyIntegrationWithMultiScheme:
             scheme_path.mkdir(parents=True)
 
             profiles = [["ST", "locus"], ["1", "1"]]
-            with open(scheme_path / "profiles.tsv", "w") as f:
+            with open(scheme_path / "profiles.tsv", "w", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
                 writer.writerows(profiles)
 
@@ -942,7 +942,7 @@ class TestStrategyWorkflowDiscoveryInteraction:
             f.write("workflow custom { }")
 
         profiles = [["ST", "adk"], ["1", "1"]]
-        with open(torch_path / "profiles.tsv", "w") as f:
+        with open(torch_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 

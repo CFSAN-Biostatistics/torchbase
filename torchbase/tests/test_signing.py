@@ -6,6 +6,7 @@ YubiKey tests are skipped when yubikey-manager is not installed.
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 import warnings
@@ -83,6 +84,9 @@ class TestGenerateSoftwareKeypair:
         assert priv.exists()
         assert pub.exists()
 
+    @pytest.mark.skipif(
+        os.name == "nt", reason="POSIX mode bits unsupported on Windows"
+    )
     def test_private_key_permissions(self, tmp_path):
         priv, _ = generate_software_keypair("mynamespace", tmp_path)
         mode = priv.stat().st_mode & 0o777

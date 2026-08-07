@@ -257,7 +257,7 @@ class TestErrorHandling:
         scheme_path.mkdir(parents=True)
 
         profiles = [["ST", "dinB"], ["1", "1"]]
-        with open(scheme_path / "profiles.tsv", "w") as f:
+        with open(scheme_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 

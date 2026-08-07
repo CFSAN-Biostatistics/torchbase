@@ -72,7 +72,7 @@ workflow parameterized_mlst {
         f.write(wdl_content)
 
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -102,7 +102,7 @@ def torch_without_workflow(tmp_path):
         toml.dump(metadata, f)
 
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -293,7 +293,7 @@ class TestHelpEdgeCases:
             f.write("workflow broken { input { File x } }")
 
         profiles = [["ST", "adk"], ["1", "1"]]
-        with open(torch_path / "profiles.tsv", "w") as f:
+        with open(torch_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 

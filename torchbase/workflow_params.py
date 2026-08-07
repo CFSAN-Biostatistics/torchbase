@@ -1,6 +1,6 @@
 """Workflow parameter parsing and auto-provisioning for embedded WDL workflows."""
 
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Dict, List, Optional, Tuple
 
 
@@ -61,7 +61,9 @@ def auto_provision_torch_parameters(
         profiles_table_path: Path to profiles TSV
 
     Returns:
-        Dict mapping parameter names to file paths (as strings)
+        Dict mapping parameter names to file paths as platform-neutral
+        POSIX-style strings (WDL inputs JSON is consumed by engines that
+        expect ``/`` separators regardless of host OS).
 
     Examples:
         >>> workflow_inputs = {
@@ -90,9 +92,9 @@ def auto_provision_torch_parameters(
             pattern = TORCH_PARAM_PATTERNS[param_name]
 
             if pattern == 'alleles':
-                provisioned[param_name] = str(allele_fasta_path)
+                provisioned[param_name] = PurePath(allele_fasta_path).as_posix()
             elif pattern == 'profiles':
-                provisioned[param_name] = str(profiles_table_path)
+                provisioned[param_name] = PurePath(profiles_table_path).as_posix()
 
     return provisioned
 

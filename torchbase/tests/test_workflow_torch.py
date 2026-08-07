@@ -122,7 +122,7 @@ task mlst_type {
             ["3", "1", "2", "1", "1", "1", "1"],
             ["4", "1", "1", "2", "1", "1", "1"]
         ]
-        with open(torch_path / "profiles.tsv", "w") as f:
+        with open(torch_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 
@@ -284,7 +284,7 @@ class TestWorkflowTorchProfilesTable:
     def test_profiles_tsv_has_header(self, workflow_torch_tempdir):
         """profiles.tsv has header row"""
         profiles_path = workflow_torch_tempdir / "profiles.tsv"
-        with open(profiles_path) as f:
+        with open(profiles_path, newline="") as f:
             reader = csv.reader(f, delimiter="\t")
             header = next(reader)
 
@@ -294,7 +294,7 @@ class TestWorkflowTorchProfilesTable:
     def test_profiles_tsv_has_loci(self, workflow_torch_tempdir):
         """profiles.tsv header contains loci columns"""
         profiles_path = workflow_torch_tempdir / "profiles.tsv"
-        with open(profiles_path) as f:
+        with open(profiles_path, newline="") as f:
             reader = csv.reader(f, delimiter="\t")
             header = next(reader)
 
@@ -305,7 +305,7 @@ class TestWorkflowTorchProfilesTable:
     def test_profiles_tsv_has_data_rows(self, workflow_torch_tempdir):
         """profiles.tsv contains profile data rows"""
         profiles_path = workflow_torch_tempdir / "profiles.tsv"
-        with open(profiles_path) as f:
+        with open(profiles_path, newline="") as f:
             reader = csv.reader(f, delimiter="\t")
             next(reader)  # skip header
             data_rows = list(reader)
@@ -315,7 +315,7 @@ class TestWorkflowTorchProfilesTable:
     def test_profiles_tsv_consistent_column_count(self, workflow_torch_tempdir):
         """profiles.tsv has consistent column count across rows"""
         profiles_path = workflow_torch_tempdir / "profiles.tsv"
-        with open(profiles_path) as f:
+        with open(profiles_path, newline="") as f:
             reader = csv.reader(f, delimiter="\t")
             rows = list(reader)
 
@@ -574,7 +574,7 @@ class TestWorkflowTorchEdgeCases:
 
             # Create minimal profiles
             profiles = [["ST", "adk"], ["1", "1"]]
-            with open(torch_path / "profiles.tsv", "w") as f:
+            with open(torch_path / "profiles.tsv", "w", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
                 writer.writerows(profiles)
 
@@ -618,7 +618,7 @@ class TestWorkflowTorchEdgeCases:
 
             # Create profiles
             profiles = [["ST", "adk"], ["1", "1"]]
-            with open(torch_path / "profiles.tsv", "w") as f:
+            with open(torch_path / "profiles.tsv", "w", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
                 writer.writerows(profiles)
 
@@ -693,7 +693,7 @@ class TestWorkflowTorchConvention:
 
             # Create profiles
             profiles = [["ST", "adk"], ["1", "1"]]
-            with open(torch_path / "profiles.tsv", "w") as f:
+            with open(torch_path / "profiles.tsv", "w", newline="") as f:
                 writer = csv.writer(f, delimiter="\t")
                 writer.writerows(profiles)
 

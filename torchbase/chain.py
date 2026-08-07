@@ -281,7 +281,8 @@ def upload_directory(
     for f in sorted(torch_path.rglob("*")):
         if not f.is_file():
             continue
-        rel = str(f.relative_to(torch_path.parent))
+        # Kubo unixfs paths are always "/"-separated, independent of host OS.
+        rel = f.relative_to(torch_path.parent).as_posix()
         file_parts.append(
             ("file", (rel, open(f, "rb"), "application/octet-stream"))
         )

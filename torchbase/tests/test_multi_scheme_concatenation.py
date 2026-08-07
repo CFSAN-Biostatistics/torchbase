@@ -122,7 +122,7 @@ class TestAlleleConcatenation:
         scheme_path.mkdir(parents=True)
 
         profiles = [["ST", "dinB"], ["1", "1"]]
-        with open(scheme_path / "profiles.tsv", "w") as f:
+        with open(scheme_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 
@@ -162,7 +162,7 @@ class TestProfileTransformation:
         unified_profiles = torch.transform_profiles()
 
         import csv
-        with open(unified_profiles) as f:
+        with open(unified_profiles, newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
             rows = list(reader)
 
@@ -182,7 +182,7 @@ class TestProfileTransformation:
         unified_profiles = torch.transform_profiles()
 
         import csv
-        with open(unified_profiles) as f:
+        with open(unified_profiles, newline="") as f:
             reader = csv.reader(f, delimiter="\t")
             header = next(reader)
 
@@ -206,7 +206,7 @@ class TestProfileTransformation:
         unified_profiles = torch.transform_profiles()
 
         import csv
-        with open(unified_profiles) as f:
+        with open(unified_profiles, newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
             rows = list(reader)
 
@@ -232,7 +232,7 @@ class TestProfileTransformation:
         unified_profiles = torch.transform_profiles()
 
         import csv
-        with open(unified_profiles) as f:
+        with open(unified_profiles, newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
             rows = list(reader)
 
@@ -271,7 +271,7 @@ class TestProfileTransformation:
         unified_profiles = torch.transform_profiles()
 
         import csv
-        with open(unified_profiles) as f:
+        with open(unified_profiles, newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
             rows = list(reader)
 
@@ -312,7 +312,7 @@ class TestUnifiedFilesForWorkflows:
 
         # Extract locus names from profile header
         import csv
-        with open(profiles) as f:
+        with open(profiles, newline="") as f:
             reader = csv.reader(f, delimiter="\t")
             profile_header = next(reader)
 
@@ -419,7 +419,7 @@ class TestBackwardCompatibilitySingleScheme:
         unified_profiles = torch.transform_profiles()
 
         import csv
-        with open(unified_profiles) as f:
+        with open(unified_profiles, newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
             rows = list(reader)
 
@@ -490,7 +490,7 @@ class TestConcatenationEdgeCases:
         scheme_path.mkdir(parents=True)
 
         profiles = [["ST", "geneA"], ["1", "1"]]
-        with open(scheme_path / "profiles.tsv", "w") as f:
+        with open(scheme_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 
@@ -554,7 +554,7 @@ class TestConcatenationEdgeCases:
             ["1", "1", "?"],  # IGNORE wildcard
             ["2", "X", "2"],  # EXCLUDE marker
         ]
-        with open(scheme_path / "profiles.tsv", "w") as f:
+        with open(scheme_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 
@@ -568,7 +568,7 @@ class TestConcatenationEdgeCases:
         torch = Torch.load(torch_path)
         unified_profiles = torch.transform_profiles()
 
-        with open(unified_profiles) as f:
+        with open(unified_profiles, newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
             rows = list(reader)
 

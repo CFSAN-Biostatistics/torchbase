@@ -51,7 +51,7 @@ workflow parameterized_mlst {
         f.write(wdl_content)
 
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 

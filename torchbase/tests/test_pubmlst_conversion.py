@@ -259,12 +259,12 @@ class TestTorchDirectoryStructure:
                 ["2", "2", "2"],
             ]
 
-            with open(profiles_path, 'w') as f:
+            with open(profiles_path, 'w', newline="") as f:
                 writer = csv.writer(f, delimiter='\t')
                 writer.writerows(profiles_data)
 
             # Verify it can be read back
-            with open(profiles_path) as f:
+            with open(profiles_path, newline="") as f:
                 reader = csv.DictReader(f, delimiter='\t')
                 rows = list(reader)
                 assert len(rows) == 2

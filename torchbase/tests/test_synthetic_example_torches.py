@@ -87,7 +87,7 @@ class TestSimpleMLSTExampleContent:
         simple_mlst = examples_dir / "simple_mlst"
         torch_dir = list(simple_mlst.glob("*.torch"))[0]
 
-        with open(torch_dir / "profiles.tsv") as f:
+        with open(torch_dir / "profiles.tsv", newline="") as f:
             reader = csv.reader(f, delimiter="\t")
             header = next(reader)
             # First column is ST, rest are loci
@@ -123,7 +123,7 @@ class TestSimpleMLSTExampleContent:
         simple_mlst = examples_dir / "simple_mlst"
         torch_dir = list(simple_mlst.glob("*.torch"))[0]
 
-        with open(torch_dir / "profiles.tsv") as f:
+        with open(torch_dir / "profiles.tsv", newline="") as f:
             reader = csv.reader(f, delimiter="\t")
             next(reader)  # skip header
             profiles = list(reader)
@@ -313,7 +313,7 @@ class TestMultiOrganismSchemeContent:
         for scheme_name in ["salmonella", "ecoli"]:
             scheme_path = torch_dir / "schemes" / scheme_name
 
-            with open(scheme_path / "profiles.tsv") as f:
+            with open(scheme_path / "profiles.tsv", newline="") as f:
                 reader = csv.reader(f, delimiter="\t")
                 header = next(reader)
                 loci = header[1:]  # First column is ST
@@ -355,7 +355,7 @@ class TestMultiOrganismSchemeContent:
         for scheme_name in ["salmonella", "ecoli"]:
             scheme_path = torch_dir / "schemes" / scheme_name
 
-            with open(scheme_path / "profiles.tsv") as f:
+            with open(scheme_path / "profiles.tsv", newline="") as f:
                 reader = csv.reader(f, delimiter="\t")
                 next(reader)  # skip header
                 profiles = list(reader)

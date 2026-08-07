@@ -431,7 +431,7 @@ def _write_profiles_tsv(profiles_path: Path, profiles: List[Dict[str, str]]) -> 
         return
 
     fieldnames = list(profiles[0].keys())
-    with open(profiles_path, "w") as f:
+    with open(profiles_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
         writer.writerows(profiles)

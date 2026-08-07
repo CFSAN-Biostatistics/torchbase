@@ -269,7 +269,7 @@ class Torch:
                     f"{profiles_file}"
                 )
 
-            with open(profiles_file) as f:
+            with open(profiles_file, newline="") as f:
                 schema = Profile.parse(
                     scheme_name,
                     csv.reader(f, delimiter="\t")
@@ -357,7 +357,7 @@ class Torch:
             validate_operon_metadata(operon_config, operon_profiles)
             profile = None
         else:
-            with open(profiles_path) as profile_file:
+            with open(profiles_path, newline="") as profile_file:
                 profile = Profile.parse(
                     f"{metadata['name']}_{metadata['version']}",
                     csv.reader(profile_file, delimiter="\t"),

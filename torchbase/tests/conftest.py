@@ -121,7 +121,7 @@ def multi_scheme_torch_tempdir():
             ["2", "2", "2"],
             ["3", "3", "1"]
         ]
-        with open(ecoli_path / "profiles.tsv", "w") as f:
+        with open(ecoli_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(ecoli_profiles)
 
@@ -146,7 +146,7 @@ def multi_scheme_torch_tempdir():
             ["2", "1", "2"],
             ["3", "2", "1"]
         ]
-        with open(salmonella_path / "profiles.tsv", "w") as f:
+        with open(salmonella_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(salmonella_profiles)
 
@@ -220,7 +220,7 @@ def single_scheme_torch_tempdir():
             ["2", "2", "2"],
             ["3", "3", "1"]
         ]
-        with open(torch_path / "legacy.profiles.tsv", "w") as f:
+        with open(torch_path / "legacy.profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 

@@ -43,7 +43,7 @@ def torch_without_workflow(tmp_path):
         toml.dump(metadata, f)
 
     profiles = [["ST", "adk"], ["1", "1"]]
-    with open(torch_path / "profiles.tsv", "w") as f:
+    with open(torch_path / "profiles.tsv", "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerows(profiles)
 
@@ -765,7 +765,7 @@ class TestAutoStrategyWithEmbeddedWorkflows:
             f.write("workflow custom { }\n")
 
         profiles = [["ST", "adk"], ["1", "1"]]
-        with open(torch_path / "profiles.tsv", "w") as f:
+        with open(torch_path / "profiles.tsv", "w", newline="") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 
