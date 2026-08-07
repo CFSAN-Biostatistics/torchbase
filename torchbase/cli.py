@@ -9,6 +9,7 @@ from xml.etree.ElementTree import ElementTree as xml
 from tabulate import tabulate
 from subprocess import run
 import inspect
+import tempfile
 
 import requests
 import zstandard as zstd
@@ -584,6 +585,14 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
                 "The torch already has a custom workflow (main.wdl) defined."
             )
 
+        if user_specified_strategy and data_torch.typing_model == "operon":
+            raise click.ClickException(
+                "Cannot use --strategy with operon torches. "
+                "The operon typing model has exactly one built-in workflow "
+                "(operon_typing.wdl); --strategy is a speed/accuracy tier "
+                "over the allelic typing model and does not apply."
+            )
+
         # Handle auto strategy: analyze input and select appropriate strategy
         auto_decision_rationale = None
         if strategy == 'auto':
@@ -625,6 +634,19 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         elif data_torch.workflow:
             # Torch has embedded workflow
             workflow_file = data_torch.workflow
+        elif data_torch.typing_model == "operon":
+            # Operon torches have exactly one implementation for v1 (§2,
+            # docs/operon-strategy-plan.md); route straight to the built-in
+            # workflow regardless of --strategy (already rejected above if
+            # explicitly given).
+            import torchbase
+            torchbase_dir = Path(torchbase.__file__).parent
+            builtin_workflow = torchbase_dir / 'workflows' / 'builtin' / 'operon_typing.wdl'
+            if not builtin_workflow.exists():
+                raise click.ClickException(
+                    f"Built-in operon workflow not found: {builtin_workflow}"
+                )
+            workflow_file = builtin_workflow
         elif user_specified_strategy:
             # User explicitly specified --strategy, use built-in workflow
             # Note: 'auto' maps to one of the other strategies after analysis
@@ -670,8 +692,47 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         if isinstance(workflow_file, str):
             workflow_file = Path(workflow_file)
 
+        # Operon torches need explicit File inputs miniwdl can resolve: the
+        # protein reference set, the profiles.tsv manifest, and the
+        # [operon] config serialized to JSON (§6, docs/operon-strategy-plan.md).
+        if data_torch.typing_model == "operon":
+            if not data_torch.operon_config:
+                raise click.ClickException(
+                    "Operon torch is missing its [operon] config block."
+                )
+            reference_rel = data_torch.operon_config.get("reference", {}).get("file")
+            if not reference_rel:
+                raise click.ClickException(
+                    "operon.reference.file not set in metadata.toml."
+                )
+            reference_path = data_torch.path / reference_rel
+            if not reference_path.exists():
+                raise click.ClickException(
+                    f"Operon reference file not found: {reference_path}"
+                )
+
+            profiles_path = data_torch.path / "profiles.tsv"
+            if not profiles_path.exists():
+                raise click.ClickException(
+                    f"Operon profiles.tsv not found: {profiles_path}"
+                )
+
+            operon_config_dir = Path(tempfile.mkdtemp(prefix="torchbase-operon-"))
+            operon_config_path = operon_config_dir / "operon_config.json"
+            with open(operon_config_path, "w") as f:
+                json.dump(data_torch.operon_config, f)
+
+            miniwdl_cmd = ['miniwdl', 'run', str(workflow_file)]
+            if contigs:
+                miniwdl_cmd.extend(['contigs=' + str(contigs)])
+            miniwdl_cmd.extend([
+                'subunit_reference=' + str(reference_path),
+                'profiles_table=' + str(profiles_path),
+                'operon_config_json=' + str(operon_config_path),
+            ])
+
         # Handle embedded workflows with dynamic parameter parsing
-        if data_torch.workflow:
+        elif data_torch.workflow:
             from torchbase.workflow_inspect import WDLParser
             from torchbase.workflow_params import (
                 parse_torch_args,
@@ -1009,9 +1070,18 @@ def convert(ctx, verbose):
 @click.option("--kmer-size", default=13, type=int, help="K-mer size for quality analysis")
 @click.option("--overlap-threshold", default=0.90, type=float, help="Overlap threshold for quality analysis")
 @click.option("--duplicate-threshold", default=0.95, type=float, help="Duplicate threshold for quality analysis")
+@click.option("--ca-bundle", default=None, metavar="PATH",
+              help="Path to a CA certificate bundle file (useful when a VPN or corporate proxy "
+                   "performs SSL inspection). The REQUESTS_CA_BUNDLE environment variable is "
+                   "also respected.")
+@click.option("--no-ssl-verify", is_flag=True, default=False,
+              help="Disable SSL certificate verification. Use only as a last resort in "
+                   "environments where certificate inspection cannot be bypassed; prefer "
+                   "--ca-bundle instead.")
 @click.pass_context
 def _convert_pubmlst(ctx, url, scheme_id, fetch_all, output, name, namespace, cutoff_date,
-                     no_skip_errors, kmer_size, overlap_threshold, duplicate_threshold):
+                     no_skip_errors, kmer_size, overlap_threshold, duplicate_threshold,
+                     ca_bundle, no_ssl_verify):
     """Convert PubMLST schemes into a multi-scheme torch.
 
     Pass --scheme-id multiple times to bundle specific schemes (e.g., MLST and
@@ -1039,6 +1109,18 @@ def _convert_pubmlst(ctx, url, scheme_id, fetch_all, output, name, namespace, cu
     except ValueError:
         raise click.ClickException(f"Invalid cutoff-date '{cutoff_date}': expected YYYY-MM-DD")
 
+    if no_ssl_verify:
+        verify = False
+        click.echo(
+            "WARNING: SSL certificate verification disabled. "
+            "This is insecure; use --ca-bundle if possible.",
+            err=True,
+        )
+    elif ca_bundle:
+        verify = ca_bundle
+    else:
+        verify = True
+
     try:
         if fetch_all:
             torch_path = convert_all(
@@ -1051,6 +1133,7 @@ def _convert_pubmlst(ctx, url, scheme_id, fetch_all, output, name, namespace, cu
                 duplicate_threshold=duplicate_threshold,
                 cutoff_date=cutoff,
                 skip_errors=not no_skip_errors,
+                verify=verify,
             )
         else:
             torch_path = convert_schemes(
@@ -1063,6 +1146,7 @@ def _convert_pubmlst(ctx, url, scheme_id, fetch_all, output, name, namespace, cu
                 overlap_threshold=overlap_threshold,
                 duplicate_threshold=duplicate_threshold,
                 cutoff_date=cutoff,
+                verify=verify,
             )
         click.echo(f"Successfully created torch at: {torch_path}")
     except Exception as e:
@@ -1349,6 +1433,49 @@ def _shigatyper(ctx, sequences, profiles, output, name, version, kmer_size, over
     except Exception as e:
         raise click.ClickException(f"Conversion failed: {str(e)}")
 
+
+@convert.command("stxtyper")
+@click.argument("stx_prot", type=click.File(), required=False)
+@click.option("--download", is_flag=True, default=False,
+              help="Download stx.prot + version.txt from ncbi/stxtyper")
+@click.option("--stxtyper-version", default=None,
+              help="Upstream StxTyper version this torch claims parity against")
+@click.option("--output", default=".", show_default=True, help="Output directory")
+@click.option("--namespace", default="ncbi", show_default=True, help="Torch namespace")
+@click.option("--name", default="stxtyper", show_default=True, help="Torch name")
+@click.option("--version", default=None, help="Torch version (default: stxtyper version)")
+@click.pass_context
+def _stxtyper(ctx, stx_prot, download, stxtyper_version, output, namespace, name, version):
+    "Create an operon torch from NCBI StxTyper's stx.prot reference set."
+    from torchbase.conversions.log import setup_logging
+    setup_logging(ctx.obj.get("verbosity", 0))
+    import tempfile
+    from torchbase.conversions.stxtyper import convert_local, DOWNLOAD_SOURCES
+
+    if download:
+        if stx_prot:
+            raise click.UsageError("Cannot use --download with an explicit STX_PROT argument.")
+        from torchbase.conversions.stxtyper import download_sources
+        dest = Path(tempfile.mkdtemp(prefix="torchtools_stxtyper_"))
+        click.echo(f"Downloading from {DOWNLOAD_SOURCES['repo']} → {dest}")
+        sources = download_sources(dest)
+        stx_prot = sources["stx_prot"]
+        stxtyper_version = stxtyper_version or sources["stxtyper_version"]
+    elif not stx_prot:
+        raise click.UsageError("Provide STX_PROT or pass --download.")
+
+    try:
+        torch_path = convert_local(
+            stx_prot_file=stx_prot,
+            output_path=output,
+            namespace=namespace,
+            name=name,
+            version=version,
+            stxtyper_version=stxtyper_version,
+        )
+        click.echo(f"Created torch at: {torch_path}")
+    except Exception as e:
+        raise click.ClickException(f"Conversion failed: {str(e)}")
 
 
 
