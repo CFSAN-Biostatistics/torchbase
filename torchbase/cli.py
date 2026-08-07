@@ -9,6 +9,7 @@ from xml.etree.ElementTree import ElementTree as xml
 from tabulate import tabulate
 from subprocess import run
 import inspect
+import shutil
 import tempfile
 
 import requests
@@ -204,6 +205,16 @@ class FileReaderWithPath:
     def __getattr__(self, name):
         # Delegate all other attributes to the wrapped reader
         return getattr(self._reader, name)
+
+
+def _input_path(reads_param) -> str:
+    """Filesystem path a reads/contigs option refers to.
+
+    `ReadsFile.convert` hands back an open (possibly recompressing) reader, so
+    the raw option value stringifies to a repr, not a path. miniwdl needs the
+    path on disk.
+    """
+    return str(getattr(reads_param, "_original_path", reads_param))
 
 
 class ReadsFile(click.Path):
@@ -569,12 +580,6 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         # Load data torch
         data_torch = Torch.load(torch)
 
-        # Generate unified torch data files for workflow
-        try:
-            allele_fasta_path, profiles_table_path = data_torch.get_unified_files()
-        except Exception as e:
-            raise click.ClickException(f"Failed to generate torch data files: {str(e)}")
-
         # Check for conflict: --strategy cannot be used with embedded workflows
         # Check if user explicitly specified --strategy via the callback flag
         user_specified_strategy = clx.obj.get('_strategy_explicit', False) if clx.obj else False
@@ -692,6 +697,17 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         if isinstance(workflow_file, str):
             workflow_file = Path(workflow_file)
 
+        # Generate unified torch data files for the workflow. Deferred until
+        # after workflow resolution so a rejected or misconfigured invocation
+        # never materializes them, and skipped entirely for operon torches,
+        # which consume the protein reference and profiles.tsv directly.
+        allele_fasta_path = profiles_table_path = None
+        if data_torch.typing_model != "operon":
+            try:
+                allele_fasta_path, profiles_table_path = data_torch.get_unified_files()
+            except Exception as e:
+                raise click.ClickException(f"Failed to generate torch data files: {str(e)}")
+
         # Operon torches need explicit File inputs miniwdl can resolve: the
         # protein reference set, the profiles.tsv manifest, and the
         # [operon] config serialized to JSON (§6, docs/operon-strategy-plan.md).
@@ -722,14 +738,24 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             with open(operon_config_path, "w") as f:
                 json.dump(data_torch.operon_config, f)
 
-            miniwdl_cmd = ['miniwdl', 'run', str(workflow_file)]
-            if contigs:
-                miniwdl_cmd.extend(['contigs=' + str(contigs)])
-            miniwdl_cmd.extend([
+            if not contigs:
+                raise click.ClickException(
+                    "Operon typing runs on an assembly; pass -c/--contigs."
+                )
+
+            # The algorithm module itself is a workflow input: the tasks
+            # import it inside their containers instead of re-implementing it.
+            import torchbase.operon
+            operon_module_path = Path(torchbase.operon.__file__)
+
+            miniwdl_cmd = [
+                'miniwdl', 'run', str(workflow_file),
+                'contigs=' + _input_path(contigs),
                 'subunit_reference=' + str(reference_path),
                 'profiles_table=' + str(profiles_path),
                 'operon_config_json=' + str(operon_config_path),
-            ])
+                'operon_module=' + str(operon_module_path),
+            ]
 
         # Handle embedded workflows with dynamic parameter parsing
         elif data_torch.workflow:
@@ -757,16 +783,16 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
 
                 # Add all input files and torch args as-is
                 if contigs:
-                    miniwdl_cmd.append(f'contigs={contigs._original_path if hasattr(contigs, "_original_path") else contigs}')
+                    miniwdl_cmd.append('contigs=' + _input_path(contigs))
                 if reads:
-                    miniwdl_cmd.append(f'reads={reads._original_path if hasattr(reads, "_original_path") else reads}')
+                    miniwdl_cmd.append('reads=' + _input_path(reads))
                 if paired1 and paired2:
-                    miniwdl_cmd.extend([f'paired1={paired1._original_path if hasattr(paired1, "_original_path") else paired1}',
-                                       f'paired2={paired2._original_path if hasattr(paired2, "_original_path") else paired2}'])
+                    miniwdl_cmd.extend(['paired1=' + _input_path(paired1),
+                                        'paired2=' + _input_path(paired2)])
                 if interlaced:
-                    miniwdl_cmd.append(f'interlaced={interlaced._original_path if hasattr(interlaced, "_original_path") else interlaced}')
+                    miniwdl_cmd.append('interlaced=' + _input_path(interlaced))
                 if longreads:
-                    miniwdl_cmd.append(f'longreads={longreads._original_path if hasattr(longreads, "_original_path") else longreads}')
+                    miniwdl_cmd.append('longreads=' + _input_path(longreads))
 
                 # Execute and return early
                 result = run(miniwdl_cmd)
@@ -791,16 +817,9 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             all_params = {**auto_params, **user_params}
 
             # Add sequence input (user provided via -c/-r/etc)
-            if contigs:
-                all_params['query_sequences'] = str(contigs._original_path if hasattr(contigs, '_original_path') else contigs)
-            elif reads:
-                all_params['query_sequences'] = str(reads._original_path if hasattr(reads, '_original_path') else reads)
-            elif paired1:
-                all_params['query_sequences'] = str(paired1._original_path if hasattr(paired1, '_original_path') else paired1)
-            elif interlaced:
-                all_params['query_sequences'] = str(interlaced._original_path if hasattr(interlaced, '_original_path') else interlaced)
-            elif longreads:
-                all_params['query_sequences'] = str(longreads._original_path if hasattr(longreads, '_original_path') else longreads)
+            first_input = contigs or reads or paired1 or interlaced or longreads
+            if first_input:
+                all_params['query_sequences'] = _input_path(first_input)
 
             # Add optional parameters if provided via existing flags
             if quality_json:
@@ -845,15 +864,16 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
 
             # Add input files
             if contigs:
-                miniwdl_cmd.extend(['contigs=' + str(contigs)])
+                miniwdl_cmd.append('contigs=' + _input_path(contigs))
             if reads:
-                miniwdl_cmd.extend(['reads=' + str(reads)])
+                miniwdl_cmd.append('reads=' + _input_path(reads))
             if paired1 and paired2:
-                miniwdl_cmd.extend(['paired1=' + str(paired1), 'paired2=' + str(paired2)])
+                miniwdl_cmd.extend(['paired1=' + _input_path(paired1),
+                                    'paired2=' + _input_path(paired2)])
             if interlaced:
-                miniwdl_cmd.extend(['interlaced=' + str(interlaced)])
+                miniwdl_cmd.append('interlaced=' + _input_path(interlaced))
             if longreads:
-                miniwdl_cmd.extend(['longreads=' + str(longreads)])
+                miniwdl_cmd.append('longreads=' + _input_path(longreads))
 
             # Add torch data files (required by all workflows)
             miniwdl_cmd.extend(torch_params)
@@ -886,10 +906,15 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         raise click.ClickException(f"Error running workflow: {str(e)}")
     finally:
         # Clean up temporary torch files
-        if 'allele_fasta_path' in locals() and allele_fasta_path.exists():
-            allele_fasta_path.unlink()
-        if 'profiles_table_path' in locals() and profiles_table_path.exists():
-            profiles_table_path.unlink()
+        for temp_path in (
+            locals().get('allele_fasta_path'),
+            locals().get('profiles_table_path'),
+        ):
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
+        operon_config_dir = locals().get('operon_config_dir')
+        if operon_config_dir is not None:
+            shutil.rmtree(operon_config_dir, ignore_errors=True)
 
 
 
@@ -962,7 +987,7 @@ def compress_torch_alleles(torch_path, level, keep_original):
 @click.pass_context
 def call(ctx, schema, json_profile=None):
     "Load a profile definition and make a profile call from allele calls"
-    with open(schema) as schema_file:
+    with open(schema, newline="") as schema_file:
         reader = csv.reader(schema_file, delimiter='\t')
         schema = Profile.parse(tuple(reader))
     schema = Profile.parse()
