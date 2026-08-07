@@ -112,3 +112,10 @@ ENV/
 
 # Generated torch output from local conversion runs (large, non-reproducible)
 /torches/
+
+# uv is not this project's dependency manager (pyproject.toml + pip, see
+# CLAUDE.md); a lock file here is a local side effect of `uv pip install`.
+uv.lock
+
+# Local scratch space for throwaway artifacts
+.scratch/
