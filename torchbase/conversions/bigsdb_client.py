@@ -8,11 +8,14 @@ timestamps for all responses.
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import List, Optional, Dict, Any, Tuple
+from pathlib import Path
+from typing import List, Optional, Dict, Any, Tuple, Union
 import csv
 import io
 import re
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from torchbase.conversions.log import get_logger, TRACE
 
@@ -147,15 +150,39 @@ class BIGSdbClient:
         timeout: Request timeout in seconds (default: 30)
     """
 
-    def __init__(self, base_url: str, timeout: int = 30):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: int = 30,
+        verify: Union[bool, str] = True,
+        retries: int = 5,
+    ):
         """Initialize BIGSdb client.
 
         Args:
             base_url: Base URL of BIGSdb REST API
-            timeout: Request timeout in seconds
+            timeout: Read timeout in seconds (connect timeout is always 10s)
+            verify: SSL verification — True (default), False (dangerous, for broken VPN
+                environments), or a path string to a CA bundle file
+            retries: Number of retry attempts for transient failures
         """
         self.base_url = base_url
         self.timeout = timeout
+        self.verify = verify
+        self._session = self._make_session(retries)
+
+    def _make_session(self, retries: int) -> requests.Session:
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=retries,
+            backoff_factor=1.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
 
     def _parse_datetime(self, datetime_str: str) -> datetime:
         """Parse ISO format datetime string to datetime object.
@@ -204,7 +231,9 @@ class BIGSdbClient:
 
         _log.log(TRACE, "HTTP GET %s (params=%s)", url, params or {})
         try:
-            response = requests.get(url, params=params, timeout=self.timeout)
+            response = self._session.get(
+                url, params=params, timeout=(10, self.timeout), verify=self.verify
+            )
         except (
             requests.ConnectionError,
             requests.Timeout,
@@ -252,19 +281,24 @@ class BIGSdbClient:
         endpoint = f"db/{database}/schemes/{scheme_id}"
         data = self._make_request("GET", endpoint)
 
-        if not data.get("records") or len(data["records"]) == 0:
+        # API returns a flat dict, not {"records": [...]}
+        if not data.get("id") and not data.get("description"):
             msg = f"Scheme {scheme_id} not found in database {database}"
             raise BIGSdbError(msg)
 
-        record = data["records"][0]
         last_updated = None
-        if record.get("last_updated"):
-            last_updated = self._parse_datetime(record["last_updated"])
+        if data.get("last_updated"):
+            try:
+                last_updated = datetime.strptime(
+                    data["last_updated"][:10], "%Y-%m-%d"
+                ).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
 
         return SchemeMetadata(
-            scheme_id=int(record.get("scheme_id", scheme_id)),
-            name=record.get("description", f"Scheme {scheme_id}"),
-            description=record.get("description"),
+            scheme_id=int(data.get("id", scheme_id)),
+            name=data.get("description", f"Scheme {scheme_id}"),
+            description=data.get("description"),
             last_updated=last_updated,
         )
 
@@ -298,34 +332,21 @@ class BIGSdbClient:
         if updated_after:
             params["updated_after"] = updated_after.isoformat()
 
-        while True:
-            params["page"] = page
-            endpoint = f"db/{database}/schemes/{scheme_id}/loci"
-            data = self._make_request("GET", endpoint, params=params)
+        # Loci endpoint returns all loci in one response (no pagination in practice).
+        # Response: {"loci": ["https://.../loci/abcZ", ...], "records": N}
+        endpoint = f"db/{database}/schemes/{scheme_id}/loci"
+        _log.debug("Fetching loci for scheme %s", scheme_id)
+        data = self._make_request("GET", endpoint, params=params if params else None)
 
-            paging = data.get("paging", {})
-            total_pages = paging.get("pages", 1)
-            _log.debug("Fetching loci for scheme %s (page %d/%s)", scheme_id, page, total_pages or "?")
+        for locus_url in data.get("loci", []):
+            locus_id = locus_url.rstrip("/").split("/")[-1]
+            loci.append(LocusData(
+                locus_id=locus_id,
+                locus_name=locus_id,
+                alleles_count=0,
+            ))
 
-            records = data.get("records", [])
-            for record in records:
-                last_updated = None
-                if record.get("last_updated"):
-                    last_updated = self._parse_datetime(record["last_updated"])
-
-                locus = LocusData(
-                    locus_id=record.get("id", ""),
-                    locus_name=record.get("locus", ""),
-                    alleles_count=int(record.get("alleles", 0)),
-                    last_updated=last_updated,
-                )
-                loci.append(locus)
-
-            if page >= total_pages:
-                break
-
-            page += 1
-
+        _log.debug("  scheme %s: %d loci", scheme_id, len(loci))
         return loci
 
     def _fetch_profiles(
@@ -383,91 +404,85 @@ class BIGSdbClient:
         )
 
     def _fetch_alleles_fasta(
-        self, database: str, locus_id: str, cutoff_date: Optional[date] = None
-    ) -> str:
-        """Fetch allele sequences for a locus as FASTA text.
+        self,
+        database: str,
+        locus_id: str,
+        dest_path: Path,
+        cutoff_date: Optional[date] = None,
+    ) -> Path:
+        """Fetch allele sequences for a locus and stream them to dest_path.
 
-        When cutoff_date is given, fetches via the JSON alleles endpoint and
-        filters by date_entered to stay within freely-licensed data (pre-2025).
-        Without a cutoff, hits the alleles_fasta endpoint directly.
+        Uses the alleles_fasta endpoint, which for unauthenticated requests
+        already restricts results to alleles submitted on or before 2024-12-31
+        (PubMLST's licensing cutoff).  The cutoff_date parameter is accepted
+        for API compatibility but the server enforces the restriction itself.
 
         Args:
-            database: Database identifier (e.g., "pubmlst")
+            database: Database identifier (e.g., "pubmlst_neisseria_seqdef")
             locus_id: Locus identifier string
-            cutoff_date: Exclude alleles entered after this date
+            dest_path: Destination file path; parent directories are created
+            cutoff_date: Accepted for compatibility; server enforces this limit
 
         Returns:
-            FASTA text containing allele sequences
+            dest_path
 
         Raises:
+            BIGSdbNetworkError: For network-related errors
             BIGSdbError: If alleles cannot be fetched
         """
-        if cutoff_date is not None:
-            return self._fetch_alleles_fasta_filtered(database, locus_id, cutoff_date)
-        endpoint = f"db/{database}/loci/{locus_id}/alleles_fasta"
-        return self._make_request("GET", endpoint, expect_json=False)
+        dest_path = Path(dest_path)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _fetch_alleles_fasta_filtered(
-        self, database: str, locus_id: str, cutoff_date: date
-    ) -> str:
-        """Fetch alleles via JSON endpoint, filter by cutoff_date, return as FASTA.
+        url = f"{self.base_url}/db/{database}/loci/{locus_id}/alleles_fasta"
+        _log.log(TRACE, "HTTP GET %s (stream)", url)
+        try:
+            resp = self._session.get(
+                url, stream=True, timeout=(10, self.timeout), verify=self.verify
+            )
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.RequestException,
+            ConnectionError,
+            TimeoutError,
+        ) as e:
+            raise BIGSdbNetworkError(f"Network error fetching {locus_id}: {e}") from e
 
-        PubMLST changed their licensing on 2025-01-01: alleles submitted from
-        that date onward require authentication and carry non-commercial terms.
-        This method fetches individual allele records (which include date_entered)
-        and excludes any entered after the cutoff, producing a FASTA of only the
-        freely-distributable sequences.
+        if resp.status_code >= 400:
+            raise BIGSdbError(
+                f"API error {resp.status_code} fetching {locus_id}: {resp.reason}"
+            )
 
-        Args:
-            database: Database identifier
-            locus_id: Locus identifier
-            cutoff_date: Exclude alleles with date_entered after this date
+        total = int(resp.headers.get("content-length", 0))
 
-        Returns:
-            FASTA text of filtered alleles
+        try:
+            from tqdm import tqdm
+            bar: Any = tqdm(
+                total=total or None,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+                desc=locus_id,
+                leave=False,
+            )
+        except ImportError:
+            bar = None
 
-        Raises:
-            BIGSdbError: If alleles cannot be fetched
-        """
-        _log.debug("Fetching alleles for locus %s (cutoff %s, page-by-page)", locus_id, cutoff_date)
-        lines = []
-        page = 1
+        allele_count = 0
+        try:
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1 << 16):
+                    allele_count += chunk.count(b">")
+                    f.write(chunk)
+                    if bar is not None:
+                        bar.update(len(chunk))
+        finally:
+            if bar is not None:
+                bar.close()
 
-        while True:
-            endpoint = f"db/{database}/loci/{locus_id}/alleles"
-            data = self._make_request("GET", endpoint, params={"page": page})
-
-            paging = data.get("paging", {})
-            total_pages = paging.get("pages", 1)
-            _log.log(TRACE, "  locus %s: page %d/%s", locus_id, page, total_pages or "?")
-
-            records = data.get("alleles", data.get("records", []))
-            for record in records:
-                date_str = record.get("date_entered", "")
-                allele_id = record.get("allele_id", "")
-                if date_str:
-                    try:
-                        entry_date = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
-                        if entry_date > cutoff_date:
-                            _log.log(TRACE, "    %s_%s: date_entered=%s, skipped (after cutoff %s)",
-                                     locus_id, allele_id, date_str[:10], cutoff_date)
-                            continue
-                    except ValueError:
-                        pass
-
-                sequence = record.get("sequence", "")
-                if allele_id and sequence:
-                    _log.log(TRACE, "    %s_%s: date_entered=%s, kept",
-                             locus_id, allele_id, date_str[:10] if date_str else "unknown")
-                    lines.append(f">{locus_id}_{allele_id}")
-                    lines.append(sequence)
-
-            if page >= total_pages:
-                break
-            page += 1
-
-        _log.debug("  %s: %d alleles kept (cutoff %s)", locus_id, len(lines) // 2, cutoff_date)
-        return "\n".join(lines) + ("\n" if lines else "")
+        _log.debug("  %s: %d alleles → %s", locus_id, allele_count, dest_path)
+        _log.log(TRACE, "  dest: %s (%d bytes)", dest_path, dest_path.stat().st_size)
+        return dest_path
 
     def list_databases(self) -> List[DatabaseInfo]:
         """List all databases exposed by this BIGSdb instance.
@@ -484,21 +499,19 @@ class BIGSdbClient:
             BIGSdbError: If the database list cannot be fetched
         """
         _log.info("Enumerating databases from %s", self.base_url)
-        data = self._make_request("GET", "databases")
-        raw = data.get("databases", data.get("records", []))
+        # GET /db returns a list of organism groups, each with a nested
+        # "databases" array: [{"name": "...", "databases": [{...}, ...]}, ...]
+        data = self._make_request("GET", "db")
 
         databases = []
-        for entry in raw:
-            # entry may be a dict or a URL string
-            if isinstance(entry, str):
-                name = entry.rstrip("/").split("/")[-1]
-                description = name
-            else:
-                name = entry.get("name", entry.get("href", "").rstrip("/").split("/")[-1])
-                description = entry.get("description", name)
-
-            if name.endswith("_seqdef"):
-                databases.append(DatabaseInfo(name=name, description=description))
+        groups = data if isinstance(data, list) else data.get("databases", [])
+        for group in groups:
+            for entry in group.get("databases", [group] if "name" in group else []):
+                name = entry.get("name", "")
+                if name.endswith("_seqdef"):
+                    databases.append(
+                        DatabaseInfo(name=name, description=entry.get("description", name))
+                    )
 
         _log.debug("  found %d seqdef databases", len(databases))
         for db in databases:

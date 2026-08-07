@@ -42,6 +42,7 @@ def convert_all(
     duplicate_threshold: float = 0.95,
     cutoff_date: date = PUBMLST_LICENSE_CUTOFF,
     skip_errors: bool = True,
+    verify: Any = True,
 ) -> str:
     """Convert every scheme in every PubMLST database into one multi-scheme torch.
 
@@ -70,10 +71,12 @@ def convert_all(
     """
     import sys
 
+    from tqdm.auto import tqdm
+
     output_path = Path(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    client = BIGSdbClient(base_url)
+    client = BIGSdbClient(base_url, verify=verify)
     torch_version = cutoff_date.strftime("%Y.%-m.%-d")
 
     torch_dir = output_path / namespace / torch_name / f"{torch_version}.torch"
@@ -95,30 +98,32 @@ def convert_all(
     fetch_timestamp = datetime.now(timezone.utc).isoformat()
     provenance_entries: List[Dict[str, Any]] = []
 
-    for db_info in databases:
+    db_bar = tqdm(databases, desc="Databases", unit="db", leave=True)
+    for db_info in db_bar:
         database = db_info.name
+        db_bar.set_postfix(db=database[-30:])
         try:
             scheme_list = client.list_schemes(database)
         except Exception as exc:
             if skip_errors:
-                import logging as _stdlib_logging
                 _log.warning("skipping database %s: %s", database, exc)
-                print(f"[warn] skipping database {database}: {exc}", file=sys.stderr)
+                tqdm.write(f"[warn] skipping database {database}: {exc}")
                 continue
             raise
 
         _log.info("Processing database: %s (%d schemes)", database, len(scheme_list))
-        for scheme_info in scheme_list:
+        scheme_bar = tqdm(scheme_list, desc="Schemes", unit="scheme", leave=False)
+        for scheme_info in scheme_bar:
             _log.debug("  scheme %d: %s", scheme_info.scheme_id, scheme_info.description)
+            scheme_bar.set_postfix(scheme=scheme_info.description[:25])
             try:
                 scheme_data = client.fetch_scheme(
                     database, scheme_info.scheme_id, cutoff_date=cutoff_date
                 )
             except Exception as exc:
                 if skip_errors:
-                    print(
-                        f"[warn] skipping {database}/scheme {scheme_info.scheme_id}: {exc}",
-                        file=sys.stderr,
+                    tqdm.write(
+                        f"[warn] skipping {database}/scheme {scheme_info.scheme_id}: {exc}"
                     )
                     continue
                 raise
@@ -135,12 +140,16 @@ def convert_all(
             alleles_dir = organism_dir / "alleles"
             alleles_dir.mkdir(exist_ok=True)
 
-            for locus in scheme_data.loci:
-                fasta_text = client._fetch_alleles_fasta(
-                    database, locus.locus_id, cutoff_date=cutoff_date
-                )
+            locus_bar = tqdm(scheme_data.loci, desc="Loci", unit="locus", leave=False)
+            for locus in locus_bar:
+                locus_bar.set_postfix(locus=locus.locus_id)
                 locus_fasta_path = alleles_dir / f"{locus.locus_id}.fasta"
-                locus_fasta_path.write_text(fasta_text)
+                if locus_fasta_path.exists() and locus_fasta_path.stat().st_size > 0:
+                    _log.debug("    locus %s: already exists, skipping", locus.locus_id)
+                    continue
+                client._fetch_alleles_fasta(
+                    database, locus.locus_id, locus_fasta_path, cutoff_date=cutoff_date
+                )
                 _log.debug("    locus %s: wrote %s", locus.locus_id, locus_fasta_path)
 
             _write_profiles_tsv(
@@ -245,6 +254,7 @@ def convert_schemes(
     overlap_threshold: float = 0.90,
     duplicate_threshold: float = 0.95,
     cutoff_date: date = PUBMLST_LICENSE_CUTOFF,
+    verify: Any = True,
 ) -> str:
     """Convert one or more PubMLST schemes into a multi-scheme torch.
 
@@ -288,9 +298,11 @@ def convert_schemes(
         base_url = database_url
         database_name = _extract_database_name(database_url)
 
+    from tqdm.auto import tqdm
+
     _log.info("Converting %d scheme(s) from %s/%s (cutoff: %s)",
               len(scheme_ids), base_url, database_name, cutoff_date)
-    client = BIGSdbClient(base_url)
+    client = BIGSdbClient(base_url, verify=verify)
 
     # Version is derived from the cutoff date to make the data snapshot explicit.
     # e.g. cutoff_date=2024-12-31 → version "2024.12.31"
@@ -324,22 +336,26 @@ def convert_schemes(
     scheme_registry: Dict[str, Dict[str, Any]] = {}
     fetch_timestamp = datetime.now(timezone.utc).isoformat()
 
-    for scheme_data in schemes:
+    scheme_bar = tqdm(schemes, desc="Schemes", unit="scheme", leave=True)
+    for scheme_data in scheme_bar:
         scheme_key = _sanitize_name(scheme_data.metadata.name)
+        scheme_bar.set_postfix(scheme=scheme_data.metadata.name[:25])
         organism_dir = schemes_dir / scheme_key
         organism_dir.mkdir(exist_ok=True)
         alleles_dir = organism_dir / "alleles"
         alleles_dir.mkdir(exist_ok=True)
 
-        allele_counts = {}
-        for locus in scheme_data.loci:
-            fasta_text = client._fetch_alleles_fasta(
-                database_name, locus.locus_id, cutoff_date=cutoff_date
-            )
+        locus_bar = tqdm(scheme_data.loci, desc="Loci", unit="locus", leave=False)
+        for locus in locus_bar:
+            locus_bar.set_postfix(locus=locus.locus_id)
             fasta_path = alleles_dir / f"{locus.locus_id}.fasta"
-            fasta_path.write_text(fasta_text)
-            allele_counts[locus.locus_id] = locus.alleles_count
-            _log.debug("    locus %s: %d alleles", locus.locus_id, locus.alleles_count)
+            if fasta_path.exists() and fasta_path.stat().st_size > 0:
+                _log.debug("    locus %s: already exists, skipping", locus.locus_id)
+                continue
+            client._fetch_alleles_fasta(
+                database_name, locus.locus_id, fasta_path, cutoff_date=cutoff_date
+            )
+            _log.debug("    locus %s: wrote %s", locus.locus_id, fasta_path)
 
         profiles_path = organism_dir / "profiles.tsv"
         _write_profiles_tsv(profiles_path, scheme_data.profiles.profiles)
