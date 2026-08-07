@@ -14,7 +14,15 @@ Torchbase is a Python framework for generalized allelic typing from sequencing d
 
 Torches are distributed via IPFS to enable versioned, reproducible typing across different users and institutions.
 
-**Typing Strategies**: Users choose speed/accuracy tradeoff:
+**Typing Model**: What kind of scheme this is — a torch property (`typing_model` in `metadata.toml`):
+- `allelic` (default, backward compatible): independent loci matched via `Profile`.
+- `operon`: multi-subunit operons (e.g. Shiga toxin *stxAB*) typed by protein-space
+  synteny-aware search — combined identity, adjacency, disruption status. See
+  docs/operon-strategy-plan.md.
+
+**Typing Strategy**: Orthogonal speed/accuracy tradeoff, an invocation flag
+(`--strategy`), applicable only to the `allelic` typing model — `operon`
+torches have exactly one built-in workflow and reject `--strategy`:
 - `fast`: MinHash-based calling only (fastest)
 - `balanced`: MinHash with alignment fallback (default)
 - `sensitive`: Full alignment-based calling (most accurate)
@@ -24,13 +32,21 @@ Torches are distributed via IPFS to enable versioned, reproducible typing across
 
 ### Three-Layer System
 
-1. **Torch Definition Layer** (`torchbase/torchbase.py`)
+1. **Torch Definition Layer** (`torchbase/torchbase.py`, `torchbase/operon.py`)
    - `Schema`: Container for typing profiles with version info
    - `Profile`: Represents allelic profiles with special handling for wildcards (`IGNORE = "?"`) and exclusions (`EXCLUDE = "X"`)
    - Profile equality supports multiple formats: tuples, dicts, PubMLST-style strings (e.g., "locus_allele")
+   - `operon.py`: reference algorithm for the `operon` typing model — threshold
+     selection, residue-table resolution, HSP synteny pairing, status-ladder
+     scoring. Operon torches bypass `Profile` entirely (no adjacency/threshold
+     concept there); `torchbase/workflows/builtin/tasks/operon_*.wdl` mirror
+     this module inline since WDL tasks run in isolated containers.
 
 2. **Filesystem/Distribution Layer** (`torchbase/torchfs.py`)
    - `Torch` dataclass: Loads and validates torch packages from disk
+   - `Torch.typing_model` ("allelic" default, or "operon") and
+     `Torch.operon_config`/`Torch.operon_profiles` for operon torches,
+     validated at load time via `torchbase.operon.validate_operon_metadata`
    - IPFS integration for distributed torch retrieval (via `ipyfs`)
    - Manifest system for tracking available torches
    - Environment-based IPFS configuration (`TORCHBASE_IPFS_NODE`, `TORCHBASE_IPFS_PORT`)
@@ -39,12 +55,13 @@ Torches are distributed via IPFS to enable versioned, reproducible typing across
    - Two command groups:
      - `torchbase`: User-facing commands (list, pull, info, run, workflow)
      - `torchtools`: Authoring commands (build, version, convert)
-   - Strategy-based workflow routing:
-     - Built-in workflows in `torchbase/workflows/builtin/` (fast/balanced/sensitive)
-     - Custom workflows via torch-embedded `main.wdl`
-     - `--strategy` flag selects typing approach (error if used with embedded workflows)
+   - Dispatch on the pair `(typing_model, strategy)`:
+     - `typing_model = "allelic"`: built-in workflows in `torchbase/workflows/builtin/` (fast/balanced/sensitive), or a custom `main.wdl`
+     - `typing_model = "operon"`: routes to `torchbase/workflows/builtin/operon_typing.wdl`; `--strategy` is rejected (one implementation for v1)
+     - Custom workflows via torch-embedded `main.wdl` (error if `--strategy` also given)
    - Execution via `miniwdl` for WDL workflows
    - Automatic file decompression/compression to zstandard format
+
 
 ### Torch Package Structure
 
@@ -76,9 +93,20 @@ Torches are distributed via IPFS to enable versioned, reproducible typing across
             └── locus2.fasta
 ```
 
+**Operon Format** (`typing_model = "operon"`, e.g. StxTyper-parity stx torches):
+```
+<namespace>/<torchname>/<version>.torch/
+├── metadata.toml           # typing_model = "operon" + [operon] config block
+├── profiles.tsv            # declarative manifest of valid subtypes (not the matcher)
+└── _resources/
+    └── subunits.faa        # protein reference set, accession|subunit_role|reference_subtype|class headers
+```
+No `main.wdl` — routes to the built-in `operon_typing.wdl`.
+
 **Workflow Discovery**:
 - If torch has `main.wdl` → use it (user cannot specify `--strategy`)
-- If torch has no workflow → use built-in workflow with selected strategy
+- If `typing_model == "operon"` → use built-in `operon_typing.wdl` (user cannot specify `--strategy`)
+- Else → use built-in workflow with selected strategy
 - CLI concatenates multi-scheme torches with scheme-prefixed locus names (e.g., `salmonella_adk_1`)
 
 ### Conversion System (`torchbase/conversions/`)
@@ -87,6 +115,7 @@ Converts external typing schemes to torch format:
 - `pubmlst.py`: PubMLST MLST schemes
 - `pubcgmlst.py`: PubMLST cgMLST schemes
 - `shigatyper.py`: ShigaTyper database
+- `stxtyper.py`: NCBI StxTyper's stx.prot → operon torch (typing_model = "operon")
 - `chewie-ns`: Chewie-NS wgMLST (planned)
 
 All conversions use cookiecutter templates in `torchbase/templates/`.
@@ -142,7 +171,9 @@ The `Profile.__eq__` method handles flexible matching:
 
 `Torch.load()` performs sanity checks:
 - Validates namespace/name/version consistency between metadata.toml and directory path
-- Parses profile table using `Profile.parse()`
+- `typing_model` (default `"allelic"`): allelic torches parse the profile table via
+  `Profile.parse()`; operon torches (`typing_model = "operon"`) parse the `[operon]`
+  block and profiles.tsv as a raw manifest instead — see `torchbase.operon.validate_operon_metadata`
 - Scans `_resources/` for reference files (ignores dotfiles)
 - Returns fully-loaded Torch dataclass
 
@@ -173,6 +204,18 @@ All three import shared tasks from `torchbase/workflows/builtin/tasks/`:
 - `alignment.wdl`: Minimap2 with preset selection (asm20/asm5/asm5+eqx)
 - `profile_lookup.wdl`: Profile matching and scheme inference
 
+`operon_typing.wdl` is the single built-in workflow for `typing_model = "operon"`
+torches (`--strategy` does not apply). Tasks in `tasks/`:
+- `protein_search.wdl`: tblastn of the subunit reference set against contigs,
+  normalized to internal HSP JSON at the task boundary (never leaks BLAST format downstream)
+- `operon_assembly.wdl`: pairs HSPs into candidate operons under synteny
+  constraints (contig/strand/order/intergenic distance), three relaxation passes
+- `operon_call.wdl`: combined identity vs threshold, residue-table resolution
+  for generalized classes, eight-value disruption status ladder
+
+These WDL tasks reimplement `torchbase/operon.py`'s algorithm inline (they run
+in isolated containers with no torchbase install); keep the two in lockstep.
+
 ### Strategy Selection
 
 CLI routes to appropriate workflow:
@@ -185,6 +228,8 @@ strategy_to_workflow = {
 ```
 
 For `auto` strategy: CLI pre-analyzes inputs and picks fast/balanced/sensitive once.
+
+`typing_model = "operon"` torches skip this entirely and route to `operon_typing.wdl`.
 
 ### Output Format
 
@@ -209,11 +254,22 @@ All workflows produce standardized JSON:
 }
 ```
 
+Operon output (`typing_model = "operon"`) is a **list** (multiple operons per
+assembly are normal, e.g. an isolate with both stx1 and stx2), with an eight-
+value `operon_status` ladder (`COMPLETE > COMPLETE_NOVEL > AMBIGUOUS > PARTIAL
+> PARTIAL_CONTIG_END > EXTENDED > INTERNAL_STOP > FRAMESHIFT`) alongside the
+coarse `status`. See docs/operon-strategy-plan.md §5 for the full schema.
+
 ## Known Incomplete Features
 
 - Full end-to-end validation/benchmarking (in-scope tests are unit/simple integration only)
 - IPFS functionality partially implemented (error handling incomplete)
 - Some conversion modules need completion (cgMLST, Chewie-NS)
+- Operon typing model (§Phase 0, docs/operon-strategy-plan.md): frameshift
+  detection is not yet implemented (requires stitching co-linear HSPs split
+  by a frame change); StxTyper-parity has not been validated against golden
+  fixtures or MicroBIGG-E ground truth — that requires BLAST+ execution
+  against real assemblies, out of scope until Phase 0 testing.
 
 ## Entry Points
 
@@ -224,6 +280,7 @@ Defined in pyproject.toml:
 ## Dependencies of Note
 
 - `miniwdl`: Executes WDL workflows
+- BLAST+ (`ncbi/blast` container): tblastn search for the operon typing model
 - `zstandard`: File compression
 - `ipyfs`: IPFS Python client
 - `toml`: Metadata parsing
