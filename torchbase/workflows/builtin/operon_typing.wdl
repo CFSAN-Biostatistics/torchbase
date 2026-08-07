@@ -17,6 +17,10 @@ workflow operon_typing {
         File subunit_reference
         File profiles_table
         File operon_config_json
+        # torchbase/operon.py — the typing algorithm itself, localized into
+        # each task's container so the workflow and the unit tests run the
+        # same code (see tasks/*.wdl headers).
+        File operon_module
         String scheme = ""
     }
 
@@ -25,13 +29,15 @@ workflow operon_typing {
             contigs = contigs,
             subunit_reference = subunit_reference,
             operon_config_json = operon_config_json,
+            operon_module = operon_module,
             gapextend = 2
     }
 
     call assembly.assemble_operons {
         input:
             hsps = search_subunits.hsps,
-            operon_config_json = operon_config_json
+            operon_config_json = operon_config_json,
+            operon_module = operon_module
     }
 
     call scoring.call_operons {
@@ -39,6 +45,7 @@ workflow operon_typing {
             candidates = assemble_operons.candidates,
             operon_config_json = operon_config_json,
             profiles_table = profiles_table,
+            operon_module = operon_module,
             scheme = scheme
     }
 

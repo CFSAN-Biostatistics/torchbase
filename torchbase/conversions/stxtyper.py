@@ -48,16 +48,19 @@ IDENTITY_THRESHOLDS = {
 # collapse to generalized class "2" and are resolved by residue table.
 GENERALIZED_CLASSES = {"2": ["2a", "2c", "2d"]}
 
-# Residue decision table (stxtyper.cpp:536-556). `index` is 0-based into the
-# reference protein sequence — StxTyper's own A312/A318/B34 documentation is
-# 1-based, so the source coordinates are shifted by -1 here.
+# Residue decision table (stxtyper.cpp:536-556). `index` is a 0-based offset
+# into the reference protein, which is exactly how StxTyper indexes them:
+# `getStxType()` reads `a[312]`, `a[318]` and `b[34]` out of `qMap()`, whose
+# character *i* is the subject residue aligned to 0-based reference offset
+# *i*. The "A312/A318/B34" names in StxTyper's METHODS.md are those same
+# offsets, not 1-based positions, so they are transcribed verbatim.
 RESIDUE_RULES = [
     {
         "class": "2",
         "positions": [
-            {"subunit": "A", "index": 311},  # A312 (1-based)
-            {"subunit": "A", "index": 317},  # A318 (1-based)
-            {"subunit": "B", "index": 33},   # B34  (1-based)
+            {"subunit": "A", "index": 312},
+            {"subunit": "A", "index": 318},
+            {"subunit": "B", "index": 34},
         ],
         "table": [
             {"call": "2a", "residues": [["F", "S"], ["K", "E"], ["D"]]},
@@ -70,6 +73,12 @@ RESIDUE_RULES = [
 
 INTERGENIC_MAX = 36  # bp (stxtyper.cpp:147: "max intergenic region in the reference set + 2")
 INTERGENIC_RELAX_FACTOR = 2
+
+# Group 1 is a class's parent class: "2c" -> "2", "1a" -> "1"
+# (stxtyper.cpp:220, `stxSuperClass`).
+SUPERCLASS_PATTERN = r"^([0-9]+)"
+MIN_OPERON_IDENTITY = 0.8  # stxtyper.cpp:150 identity_min
+OVERLAP_SLACK = 30         # stxtyper.cpp:148 slack
 
 HEADER_FORMAT = "accession|subunit_role|reference_subtype|class"
 
@@ -88,14 +97,28 @@ def download_sources(dest_dir: Path) -> dict:
     return {"stx_prot": open(stx_prot_path), "stxtyper_version": stxtyper_version}
 
 
+def _collapse_class(type_code: str) -> str:
+    """Operon-level class for a 2-char type code.
+
+    StxTyper collapses the types a residue table has to separate (2a/2c/2d)
+    into their generalized class "2" and keys identity thresholds off that
+    (`BlastAlignment::BlastAlignment`, stxtyper.cpp:213-219). The subclass
+    field in the header is *not* the class: stxB2d carries subclass stxB2c.
+    """
+    for generalized, members in GENERALIZED_CLASSES.items():
+        if type_code in members:
+            return generalized
+    return type_code
+
+
 def _parse_stx_prot(fh: IO) -> list:
-    """Parse stx.prot into a list of {accession, subunit_role, type, class,
-    sequence} records.
+    """Parse stx.prot into a list of {accession, subunit_role,
+    reference_subtype, type_code, class_label, sequence} records.
 
     Headers are `>accession|famId|subclass`, e.g.
-    `AAS07582.1|stxA2c|stxA2` — famId is "stx" + subunit letter + 2-char
-    type (e.g. "stxA2c"); subclass is famId with the type collapsed for
-    classes that need residue-table resolution (e.g. "stxA2").
+    `AAS07596.1|stxA2c|stxA2` — famId is "stx" + subunit letter + 2-char
+    type code; subclass is the label StxTyper reports as the reference
+    subtype, which for residue-resolved types is the collapsed form.
     """
     records = []
     header = None
@@ -107,13 +130,12 @@ def _parse_stx_prot(fh: IO) -> list:
         accession, fam_id, subclass = header.split("|")
         subunit_role = fam_id[3]  # "stx" + role + type
         type_code = fam_id[4:]    # e.g. "2c", "1a"
-        class_label = subclass[4:]  # e.g. "2", "1a"
         records.append({
             "accession": accession,
             "subunit_role": subunit_role,
-            "reference_subtype": fam_id,
+            "reference_subtype": subclass,
             "type_code": type_code,
-            "class_label": class_label,
+            "class_label": _collapse_class(type_code),
             "sequence": "".join(seq_lines),
         })
 
@@ -245,6 +267,11 @@ def convert_local(
             "intergenic_relax_factor": INTERGENIC_RELAX_FACTOR,
             "require_same_strand": True,
             "require_same_contig": True,
+            # "2c" -> "2", "1a" -> "1": the resolution a disrupted operon
+            # still supports (StxTyper's stxSuperClass).
+            "superclass_pattern": SUPERCLASS_PATTERN,
+            "min_operon_identity": MIN_OPERON_IDENTITY,
+            "overlap_slack": OVERLAP_SLACK,
             "reference": {
                 "file": "_resources/subunits.faa",
                 "header_format": HEADER_FORMAT,

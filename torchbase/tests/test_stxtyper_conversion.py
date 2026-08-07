@@ -56,8 +56,12 @@ class TestConvertLocal:
         assert by_subtype["stx1a"]["subunit_A"] == "stxA1a"
         assert by_subtype["stx1a"]["subunit_B"] == "stxB1a"
 
+        # 2c collapses into generalized class "2" (identity alone cannot
+        # separate 2a/2c/2d), and the reported reference subtype is
+        # stx.prot's subclass field, not its famId.
         assert by_subtype["stx2c"]["class"] == "2"
-        assert by_subtype["stx2c"]["subunit_A"] == "stxA2c"
+        assert by_subtype["stx2c"]["subunit_A"] == "stxA2"
+        assert by_subtype["stx2c"]["subunit_B"] == "stxB2"
 
     def test_reference_headers_use_declared_format(self, tmp_path):
         torch_path = convert_local(
@@ -73,7 +77,7 @@ class TestConvertLocal:
             if line.startswith(">")
         ]
         assert "AAS07500.1|A|stxA1a|1a" in headers
-        assert "AAS07596.1|A|stxA2c|2" in headers
+        assert "AAS07596.1|A|stxA2|2" in headers
 
     def test_identity_thresholds_transcribed(self, tmp_path):
         torch_path = convert_local(
@@ -85,7 +89,7 @@ class TestConvertLocal:
         assert torch.operon_config["identity_thresholds"]["1a"] == 0.983
         assert torch.operon_config["identity_thresholds"]["default"] == 0.98
 
-    def test_residue_rule_positions_are_zero_based(self, tmp_path):
+    def test_residue_rule_positions_match_stxtyper_offsets(self, tmp_path):
         torch_path = convert_local(
             stx_prot_file=io.StringIO(STX_PROT_FIXTURE),
             output_path=tmp_path,
@@ -94,10 +98,10 @@ class TestConvertLocal:
         torch = Torch.load(torch_path)
         rule = torch.operon_config["residue_rules"][0]
         positions = {(p["subunit"], p["index"]) for p in rule["positions"]}
-        # StxTyper documents A312/A318/B34 as 1-based positions.
-        assert ("A", 311) in positions
-        assert ("A", 317) in positions
-        assert ("B", 33) in positions
+        # StxTyper reads these residues out of qMap(), whose character i is
+        # the subject residue aligned to 0-based reference offset i, so
+        # A312/A318/B34 are transcribed verbatim (stxtyper.cpp:536-556).
+        assert positions == {("A", 312), ("A", 318), ("B", 34)}
 
     def test_empty_stx_prot_raises(self, tmp_path):
         with pytest.raises(ValueError):
