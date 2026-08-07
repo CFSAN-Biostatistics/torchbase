@@ -143,6 +143,9 @@ class Torch:
         references: Tuple of reference file paths (single-scheme format)
         workflow: Path to main workflow file
         buildfile: Path to build workflow file
+        typing_model: "allelic" (default) or "operon" (see docs/operon-strategy-plan.md)
+        operon_config: parsed `[operon]` metadata.toml block, operon torches only
+        operon_profiles: raw profiles.tsv rows (list of dict), operon torches only
     """
     path: Path
     profile: Optional[Union[Profile, Schema]] = None
@@ -158,6 +161,13 @@ class Torch:
 
     # Signing
     signature: Optional[Dict] = None
+
+    # Typing model axis (§2, docs/operon-strategy-plan.md): "allelic" (default)
+    # or "operon". Orthogonal to --strategy, which is a speed/accuracy tier
+    # over one typing model, not a typing-model selector.
+    typing_model: str = "allelic"
+    operon_config: Optional[Dict] = None
+    operon_profiles: Optional[list] = None
 
     @staticmethod
     def load(new_path):
@@ -316,6 +326,7 @@ class Torch:
             FileNotFoundError: If required files are missing
         """
         manifest = metadata.get("manifest", {})
+        typing_model = metadata.get("typing_model", "allelic")
 
         # Load profiles
         profiles_file = manifest.get("profiles")
@@ -330,11 +341,27 @@ class Torch:
                 f"Profiles file not found at {profiles_path}"
             )
 
-        with open(profiles_path) as profile_file:
-            profile = Profile.parse(
-                f"{metadata['name']}_{metadata['version']}",
-                csv.reader(profile_file, delimiter="\t"),
-            )
+        operon_config = None
+        operon_profiles = None
+        if typing_model == "operon":
+            # Operon torches bypass Profile.__eq__ matching entirely (see
+            # docs/operon-strategy-plan.md §2): profiles.tsv is a declarative
+            # manifest of valid subtypes, not the matching mechanism.
+            from torchbase.operon import validate_operon_metadata
+
+            operon_config = metadata.get("operon", {})
+            with open(profiles_path, newline="") as profile_file:
+                operon_profiles = list(
+                    csv.DictReader(profile_file, delimiter="\t")
+                )
+            validate_operon_metadata(operon_config, operon_profiles)
+            profile = None
+        else:
+            with open(profiles_path) as profile_file:
+                profile = Profile.parse(
+                    f"{metadata['name']}_{metadata['version']}",
+                    csv.reader(profile_file, delimiter="\t"),
+                )
 
         # Load references
         resources = path / "_resources"
@@ -371,6 +398,9 @@ class Torch:
             workflow=workflow,
             buildfile=buildfile,
             signature=signature,
+            typing_model=typing_model,
+            operon_config=operon_config,
+            operon_profiles=operon_profiles,
         )
 
     def concatenate_alleles(self) -> Path:
