@@ -109,3 +109,6 @@ ENV/
 
 # Claude Code
 .claude/
+
+# Generated torch output from local conversion runs (large, non-reproducible)
+/torches/
