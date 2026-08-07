@@ -1,6 +1,6 @@
 # Plan: operon typing model for Torchbase
 
-**Status:** implemented (v1, Phase 0 scaffold — see §11)
+**Status:** Phases 0 and 1 complete — StxTyper parity, plus a second scheme typed with no algorithm change (see §11)
 **Date:** 2026-08-07
 **Motivation:** Generalize NCBI StxTyper's protein-space, synteny-aware operon typing into a first-class Torchbase capability, so that multi-subunit virulence systems become *configuration* rather than bespoke tools.
 
@@ -244,15 +244,91 @@ The current vocabulary (`known | novel_profile | novel_allele`) is too coarse. E
 
 ## 11. Implementation status
 
+**Phase 0 parity: achieved** against StxTyper 1.0.45 on its own golden test
+suite — 182 of 182 contigs across `test/{basic,cases,synthetics,virulence_ecoli}.fa`
+agree on *every* reported field (stx type, operon status, combined identity,
+start/stop/strand, and both subunits' reference accession, reference subtype,
+identity and coverage). Verified by running `torchbase run` end to end
+(miniwdl 1.8.0, apptainer 1.5.2, `ncbi/blast:2.16.0`, BLAST+ 2.16.0) against a
+torch built by `torchtools convert stxtyper --download`. The `basic.fa` case —
+which is StxTyper's edge-case set: COMPLETE, residue-resolved subtype,
+COMPLETE_NOVEL, FRAMESHIFT, INTERNAL_STOP, PARTIAL, PARTIAL_CONTIG_END — is
+pinned as an offline regression test (`tests/test_operon_parity.py`) from
+captured HSPs, so parity is checked in CI without BLAST or a network.
+
 **Shipped:**
-- `torchbase/operon.py` — reference algorithm (threshold selection, residue-table resolution, HSP synteny pairing, status ladder), unit-tested (`tests/test_operon.py`).
+- `torchbase/operon.py` — the algorithm: BLAST normalization (including the
+  reference set's terminal stop codon), frameshift stitching, locus reduction,
+  four-pass synteny pairing, containment-based selection, threshold and
+  residue-table resolution, status ladder. Unit-tested (`tests/test_operon.py`)
+  and parity-tested (`tests/test_operon_parity.py`).
 - `torchbase/torchfs.py` — `typing_model`/`operon_config`/`operon_profiles` on `Torch`, `[operon]` validation at load time (`tests/test_operon_torch_loading.py`).
-- `torchbase/cli.py` — dispatch on `(typing_model, strategy)`; `--strategy` rejected for operon torches; routes to `operon_typing.wdl` with explicit `subunit_reference`/`profiles_table`/`operon_config_json` File inputs (`tests/test_operon_cli_routing.py`).
-- `torchbase/workflows/builtin/operon_typing.wdl` + `tasks/{protein_search,operon_assembly,operon_call}.wdl` — passes `miniwdl check`; the embedded Python in each task was smoke-tested standalone against synthetic HSP/candidate fixtures (not via `miniwdl run`, which needs Docker + BLAST+ neither available in the authoring sandbox).
-- `torchbase/conversions/stxtyper.py` — `torchtools convert stxtyper [--download]`, transcribes `stx.prot` into an operon torch with the real StxTyper thresholds and stx2acd residue table (`tests/test_stxtyper_conversion.py`, synthetic fixture — no network in-sandbox).
+- `torchbase/cli.py` — dispatch on `(typing_model, strategy)`; `--strategy` rejected for operon torches; routes to `operon_typing.wdl` with explicit `subunit_reference`/`profiles_table`/`operon_config_json`/`operon_module` File inputs (`tests/test_operon_cli_routing.py`).
+- `torchbase/workflows/builtin/operon_typing.wdl` + `tasks/{protein_search,operon_assembly,operon_call}.wdl` — run end to end under miniwdl. The tasks receive `torchbase/operon.py` as a `File` input and import it, so there is exactly one implementation of the algorithm: what the workflow runs is what the unit tests cover.
+- `torchbase/conversions/stxtyper.py` — `torchtools convert stxtyper [--download]`, transcribes `stx.prot` into an operon torch with the real StxTyper thresholds, class collapsing, and stx2acd residue table (`tests/test_stxtyper_conversion.py`).
 - `CLAUDE.md` — documents the typing-model axis and operon torch/workflow layout.
 
-**Known gaps, honestly scoped rather than silently shipped:**
-- **Frameshift detection is a stub** (`protein_search.wdl` HSPs always report `frameshift: false`). Real detection needs stitching co-linear HSPs split by a frame change across a subunit/contig pair — flagged in §7 risk 1-2 as the sharpest edge, and correctly belongs in `operon_assembly.wdl` once it exists, but wasn't implemented because it can't be validated without real frameshifted assemblies.
-- **Phase 0 parity (§7) is unstarted.** "Exact agreement with StxTyper on COMPLETE operons" requires running the workflow against MicroBIGG-E ground truth via BLAST+ — infrastructure unavailable in the authoring sandbox (no Docker, no BLAST+, no bulk data access). The algorithm itself (pairing, thresholds, residue resolution) is unit-tested and was smoke-tested end-to-end on synthetic data producing the correct §5 output shape, but this is not the same claim as StxTyper parity.
-- **Phase 1 (ETEC LT) and Phase 2 (`derive-operon`) are unstarted**, as scoped — Phase 0 needs to land first per §7's own ordering.
+**Config knobs added while reaching parity** (all scheme-agnostic, §3.1):
+`superclass_pattern` (parent class of a class — the resolution a disrupted
+operon still supports), `min_operon_identity` (StxTyper's `identity_min`),
+`overlap_slack` (containment tolerance when deduplicating overlapping
+operons).
+
+**Corrections to the v1 transcription, found by parity testing:**
+- Residue-table coordinates are 0-based offsets exactly as StxTyper indexes
+  them out of `qMap()` (A312/A318/B34); the earlier -1 shift read the wrong
+  residues and mis-resolved every stx2 subtype.
+- A reference's class is its *collapsed* class (`2a`/`2c`/`2d` → `2`), derived
+  from `famId`, not from `stx.prot`'s subclass field. The subclass field is
+  the reported reference subtype.
+- Reference proteins carry a terminal `*`. Untrimmed, it made every
+  full-length hit look like an internal stop, and left the stop codon's three
+  nucleotides in the reported operon span.
+- The status ladder's order is `FRAMESHIFT > INTERNAL_STOP >
+  PARTIAL_CONTIG_END > EXTENDED > PARTIAL > AMBIGUOUS/COMPLETE_NOVEL >
+  COMPLETE` (StxTyper's `Operon::saveTsvOut`); `EXTENDED` was one rung too high.
+
+**Phase 1 (second scheme): the generalization holds, at the cost of one config
+knob.** `examples/etec_lt/1.0.0.torch` encodes ETEC's heat-labile toxin operon
+(*eltA*/*eltB*) by hand from GenBank S60731 (LT1, strain H10407) and
+EU113242-EU113255 (LT3-LT16, Lasaro et al. 2008, PMID 18223074). It types real
+data through the unmodified `operon_typing.wdl`:
+
+| Assembly | Call |
+|---|---|
+| ETEC H10407 complete genome (FN649414-FN649418, 5.4 Mb) | `LT1 COMPLETE`, 99.74% combined identity, on plasmid FN649417 |
+| Real LT2-signature *elt* operon (EU113255) in a padded synthetic contig | `LT2 COMPLETE`, 100% identity |
+
+Both with the documented residue evidence (`A207/A213/A230/A241/B95`, the
+precursor-offset form of the paper's mature-protein A S190L/G196D/K213E/S224T
+and B T75A). Regression-tested offline in `tests/test_operon_etec_lt.py`.
+
+The one code change ETEC LT demanded was a new config key,
+`intergenic_min` (default 0): *eltA* and *eltB* **overlap**, so a pairing floor
+of zero rejected every real LT operon. StxTyper hard-codes non-overlap
+(`al1->sInt.stop <= al2->sInt.start`), which is an stx fact, not an operon
+fact. No change to the pairing, scoring, or calling logic was needed — the §3.1
+schema is sound, so Phase 2 (`derive-operon`) is unblocked.
+
+Also confirmed by this exercise: the numbering convention in the LT literature
+is **mature-protein** 1-based, verified against the sequences themselves (only
+that convention puts S/G/K/S at A190/196/213/224 and T at B75 in LT1, and only
+it makes the four LT2-producing strains' records read L/D/E/T + A). Any scheme
+transcribed from a paper needs this check; the residue index is exactly where
+§9 risk 1 says a silent wrong answer hides.
+
+**Known gaps:**
+- **Broader concordance (MicroBIGG-E) is unstarted.** Parity is proven against
+  StxTyper's own fixtures, which are curated edge cases; the millions of
+  pre-called subtypes in MicroBIGG-E remain the wider check (§7).
+- **Frameshift stitching is validated on one real case** (`stx2_fs`, plus the
+  terminal-frame-change cases in `cases.fa`/`synthetics.fa` where StxTyper
+  reports EXTENDED and we agree). The junction rule — drop the codon spanning
+  the frame change — reproduces StxTyper's alignment length exactly, but it
+  was inferred from its output rather than from its merge implementation.
+- **The ETEC LT torch types LT1 vs LT2 only.** Its residue table reads the five
+  positions that define LT2; the other 14 types in Lasaro et al. differ at
+  positions it does not read, so they are reported at class level (`LTI`). The
+  torch is an example/proof, not a curated production scheme.
+- **Phase 2 (`torchtools derive-operon`) is unstarted** — now unblocked, since
+  §7 gated it on two working schemes and both exist.

@@ -36,11 +36,13 @@ torches have exactly one built-in workflow and reject `--strategy`:
    - `Schema`: Container for typing profiles with version info
    - `Profile`: Represents allelic profiles with special handling for wildcards (`IGNORE = "?"`) and exclusions (`EXCLUDE = "X"`)
    - Profile equality supports multiple formats: tuples, dicts, PubMLST-style strings (e.g., "locus_allele")
-   - `operon.py`: reference algorithm for the `operon` typing model — threshold
-     selection, residue-table resolution, HSP synteny pairing, status-ladder
-     scoring. Operon torches bypass `Profile` entirely (no adjacency/threshold
-     concept there); `torchbase/workflows/builtin/tasks/operon_*.wdl` mirror
-     this module inline since WDL tasks run in isolated containers.
+   - `operon.py`: the algorithm for the `operon` typing model — BLAST
+     normalization, frameshift stitching, locus reduction, synteny pairing,
+     threshold and residue-table resolution, status-ladder scoring. Operon
+     torches bypass `Profile` entirely (no adjacency/threshold concept there).
+     `operon_typing.wdl`'s tasks take this module as a `File` input and import
+     it inside their containers, so there is one implementation, not a copy per
+     task — do not reintroduce inline copies.
 
 2. **Filesystem/Distribution Layer** (`torchbase/torchfs.py`)
    - `Torch` dataclass: Loads and validates torch packages from disk
@@ -101,7 +103,17 @@ torches have exactly one built-in workflow and reject `--strategy`:
 └── _resources/
     └── subunits.faa        # protein reference set, accession|subunit_role|reference_subtype|class headers
 ```
-No `main.wdl` — routes to the built-in `operon_typing.wdl`.
+No `main.wdl` — routes to the built-in `operon_typing.wdl`. Worked examples:
+`torchtools convert stxtyper` (stx) and `examples/etec_lt` (ETEC LT, hand-encoded).
+
+`[operon]` keys, all scheme-agnostic (see `torchbase/operon.py`'s docstring):
+`subunit_order`, `intergenic_max`/`intergenic_min` (negative where subunit
+genes overlap, as ETEC's *eltA*/*eltB* do), `intergenic_relax_factor`,
+`require_same_strand`/`require_same_contig`, `identity_thresholds` (per class,
+plus `default`), `generalized_classes` + `residue_rules` (for classes identity
+alone cannot separate — residue indices are 0-based offsets into the reference
+protein), `superclass_pattern` (parent class, reported when an operon is not
+COMPLETE), `min_operon_identity`, `overlap_slack`.
 
 **Workflow Discovery**:
 - If torch has `main.wdl` → use it (user cannot specify `--strategy`)
@@ -206,15 +218,19 @@ All three import shared tasks from `torchbase/workflows/builtin/tasks/`:
 
 `operon_typing.wdl` is the single built-in workflow for `typing_model = "operon"`
 torches (`--strategy` does not apply). Tasks in `tasks/`:
-- `protein_search.wdl`: tblastn of the subunit reference set against contigs,
-  normalized to internal HSP JSON at the task boundary (never leaks BLAST format downstream)
-- `operon_assembly.wdl`: pairs HSPs into candidate operons under synteny
-  constraints (contig/strand/order/intergenic distance), three relaxation passes
+- `protein_search.wdl`: tblastn of the subunit reference set against contigs
+  (StxTyper's own search parameters), normalized to internal HSP JSON at the
+  task boundary — BLAST format never leaks downstream
+- `operon_assembly.wdl`: stitches frameshift-split HSPs, reduces a reference
+  set's many accessions to one alignment per locus per class, then pairs them
+  into candidate operons under synteny constraints (contig/strand/order/
+  intergenic distance) across four passes of relaxing stringency
 - `operon_call.wdl`: combined identity vs threshold, residue-table resolution
-  for generalized classes, eight-value disruption status ladder
+  for generalized classes, disruption status ladder, and suppression of
+  candidates redundant with a better overlapping operon
 
-These WDL tasks reimplement `torchbase/operon.py`'s algorithm inline (they run
-in isolated containers with no torchbase install); keep the two in lockstep.
+Each task takes `torchbase/operon.py` as its `operon_module` File input and
+imports it; the WDL is plumbing, the algorithm lives in one place.
 
 ### Strategy Selection
 
@@ -256,20 +272,26 @@ All workflows produce standardized JSON:
 
 Operon output (`typing_model = "operon"`) is a **list** (multiple operons per
 assembly are normal, e.g. an isolate with both stx1 and stx2), with an eight-
-value `operon_status` ladder (`COMPLETE > COMPLETE_NOVEL > AMBIGUOUS > PARTIAL
-> PARTIAL_CONTIG_END > EXTENDED > INTERNAL_STOP > FRAMESHIFT`) alongside the
-coarse `status`. See docs/operon-strategy-plan.md §5 for the full schema.
+value `operon_status` ladder (most to least intact: `COMPLETE > COMPLETE_NOVEL
+> AMBIGUOUS > PARTIAL > EXTENDED > PARTIAL_CONTIG_END > INTERNAL_STOP >
+FRAMESHIFT`) alongside the coarse `status`. When assigning a status the
+disruptions are checked in the reverse order — a frameshift outranks an
+internal stop, which outranks truncation at a contig end. See
+docs/operon-strategy-plan.md §5 for the full schema.
 
 ## Known Incomplete Features
 
 - Full end-to-end validation/benchmarking (in-scope tests are unit/simple integration only)
 - IPFS functionality partially implemented (error handling incomplete)
 - Some conversion modules need completion (cgMLST, Chewie-NS)
-- Operon typing model (§Phase 0, docs/operon-strategy-plan.md): frameshift
-  detection is not yet implemented (requires stitching co-linear HSPs split
-  by a frame change); StxTyper-parity has not been validated against golden
-  fixtures or MicroBIGG-E ground truth — that requires BLAST+ execution
-  against real assemblies, out of scope until Phase 0 testing.
+- Operon typing model (docs/operon-strategy-plan.md): Phase 0 parity with
+  StxTyper 1.0.45 is done (182/182 contigs of its golden suite agree on every
+  field; `tests/test_operon_parity.py` pins it offline), and Phase 1 is done —
+  `examples/etec_lt` is a second, hand-encoded scheme (ETEC *eltA*/*eltB*) that
+  types real data through the same workflow, needing only the `intergenic_min`
+  config key for its overlapping genes (`tests/test_operon_etec_lt.py`). Still
+  open: broader concordance against MicroBIGG-E, and Phase 2
+  (`torchtools derive-operon`).
 
 ## Entry Points
 
