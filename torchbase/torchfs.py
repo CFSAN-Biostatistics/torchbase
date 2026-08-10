@@ -563,26 +563,26 @@ class Torch:
                     out_f.write('\t'.join(row) + '\n')
 
     def _transform_single_scheme_profiles(self, output_path: Path) -> None:
-        """Transform profiles from single-scheme torch (backward compatible).
+        """Write a single-scheme torch's profile table for downstream typing.
+
+        The profile identifier is the first column. `Profile.header` covers only
+        the loci — the identifier lives in `Profile.profile` — so writing the
+        header alone produced a table with no ST column, and profile lookup
+        could never match anything against it.
 
         Args:
             output_path: Path to write transformed TSV
         """
-        # For single-scheme, copy profiles as-is
-        # Profile object has attributes matching original table structure
         if not self.profile or not self.profile.profiles:
             return
 
-        first_profile = self.profile.profiles[0]
-        header = first_profile.header
+        loci = [h for h in self.profile.profiles[0].header if h != 'ST']
 
-        with open(output_path, 'w') as out_f:
-            # Write header
-            out_f.write('\t'.join(header) + '\n')
-
-            # Write each profile
+        with open(output_path, 'w', newline='') as out_f:
+            out_f.write('\t'.join(['ST'] + loci) + '\n')
             for profile in self.profile.profiles:
-                row = [str(getattr(profile, h, '')) for h in header]
+                row = [str(profile.profile)]
+                row.extend(str(getattr(profile, locus, '')) for locus in loci)
                 out_f.write('\t'.join(row) + '\n')
 
     def get_unified_files(self) -> Tuple[Path, Path]:
