@@ -642,7 +642,8 @@ class TestStrategyWithoutTorchWorkflow:
             )
             mock_torch_class.load.return_value = mock_torch
 
-            with patch('torchbase.cli.run') as mock_run:
+            with patch('torchbase.typing_run.type_allelic') as mock_type:
+                mock_type.return_value = {"profile_id": "ST1"}
                 result = runner.invoke(
                     cli,
                     [
@@ -652,8 +653,8 @@ class TestStrategyWithoutTorchWorkflow:
                     ]
                 )
 
-                # Should succeed (or call miniwdl)
-                assert result.exit_code == 0 or mock_run.called
+                assert result.exit_code == 0, result.output
+                assert mock_type.call_args[1]["strategy"] == "fast"
 
     def test_data_only_torch_allows_strategy(
         self, torch_without_workflow, sample_reads_file
@@ -735,7 +736,8 @@ class TestStrategyIntegrationWithMultiScheme:
             )
             mock_torch_class.load.return_value = mock_torch
 
-            with patch('torchbase.cli.run') as mock_run:
+            with patch('torchbase.typing_run.type_allelic') as mock_type:
+                mock_type.return_value = {"profile_id": "ST1"}
                 result = runner.invoke(
                     cli,
                     [
@@ -745,8 +747,10 @@ class TestStrategyIntegrationWithMultiScheme:
                     ]
                 )
 
-                # Should work with multi-scheme torch
-                assert result.exit_code == 0 or mock_run.called
+                # A multi-scheme torch types like any other; concatenating its
+                # schemes is the torch's job, not the strategy's.
+                assert result.exit_code == 0, result.output
+                assert mock_type.call_args[0][0] is mock_torch
 
     def test_strategy_receives_concatenated_multi_scheme_files(
         self, tmp_path, sample_reads_file

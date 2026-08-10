@@ -112,39 +112,117 @@ class TestQualityJsonParsing:
         assert qj["loci"]["adk"]["suspect_pairs"] == []
 
 
-class TestFilterAllelesTaskInputs:
-    """filter_alleles WDL task receives correct inputs from quality JSON."""
+class TestSuspectFilteringReachesTheAlleleSet:
+    """Quality filtering is applied before any compute is dispatched.
 
-    def test_filter_alleles_wdl_exists(self):
-        """filter_alleles.wdl task file exists in builtin tasks."""
-        from pathlib import Path
-        import torchbase
-        tasks_dir = Path(torchbase.__file__).parent / "workflows" / "builtin" / "tasks"
-        assert (tasks_dir / "filter_alleles.wdl").exists()
+    This used to be a WDL task, and these tests used to assert that
+    `filter_alleles.wdl` existed and was referenced by the typing workflows.
+    Filtering is now a package-layer step (torchbase/quality_filters.py), so
+    the contract worth defending is the observable one: with a quality.json and
+    an exclusion flag, the excluded alleles are absent from the FASTA handed to
+    the search, and the exclusions are reported in the result.
+    """
 
-    def test_filter_alleles_wdl_has_quality_json_input(self):
-        """filter_alleles.wdl accepts quality_json as an input."""
-        from pathlib import Path
-        import torchbase
-        wdl = Path(torchbase.__file__).parent / "workflows" / "builtin" / "tasks" / "filter_alleles.wdl"
-        content = wdl.read_text()
-        assert "quality_json" in content
+    def _torch(self, tmp_path, alleles):
+        from unittest.mock import MagicMock
+        torch = MagicMock()
+        allele_fasta = tmp_path / "alleles.fasta"
+        allele_fasta.write_text(alleles)
+        profiles = tmp_path / "profiles.tsv"
+        profiles.write_text("ST\tadk\tfumC\n1\t1\t1\n")
+        torch.get_unified_files.return_value = (allele_fasta, profiles)
+        torch.path = tmp_path / "ns" / "name" / "1.0.0.torch"
+        return torch
 
-    def test_fast_typing_wdl_uses_filter_alleles(self):
-        """fast_typing.wdl invokes the filter_alleles task."""
-        from pathlib import Path
-        import torchbase
-        wdl = Path(torchbase.__file__).parent / "workflows" / "builtin" / "fast_typing.wdl"
-        content = wdl.read_text()
-        assert "filter_alleles" in content
+    def _run_fast(self, torch, tmp_path, quality_path, **flags):
+        """Run the fast strategy with compute stubbed, returning the FASTA it screened."""
+        from unittest.mock import patch
+        from torchbase import typing_run
 
-    def test_balanced_typing_wdl_uses_filter_alleles(self):
-        """balanced_typing.wdl invokes the filter_alleles task."""
-        from pathlib import Path
-        import torchbase
-        wdl = Path(torchbase.__file__).parent / "workflows" / "builtin" / "balanced_typing.wdl"
-        content = wdl.read_text()
-        assert "filter_alleles" in content
+        query = tmp_path / "query.fasta"
+        query.write_text(">q1\nACGT\n")
+        seen = {}
+
+        def fake_screen(query_path, allele_fasta, strategy, threshold, engine):
+            seen["alleles"] = Path(allele_fasta).read_text()
+            return {}
+
+        with patch.object(typing_run, "_screen", side_effect=fake_screen):
+            result = typing_run.type_allelic(
+                torch, str(query), strategy="fast",
+                quality_json=str(quality_path) if quality_path else None,
+                **flags
+            )
+        return seen.get("alleles", ""), result
+
+    def test_suspect_locus_is_excluded_from_the_screened_alleles(self, tmp_path):
+        # The schema quality_filters actually reads: a locus marked suspect.
+        quality = tmp_path / "quality.json"
+        quality.write_text(json.dumps({"loci": {"adk": {"suspect": True}}}))
+        torch = self._torch(tmp_path, ">adk_1\nACGT\n>fumC_1\nACGT\n")
+
+        screened, result = self._run_fast(
+            torch, tmp_path, quality, exclude_suspect_loci=True
+        )
+
+        assert "fumC_1" in screened
+        assert "adk_1" not in screened
+        assert "adk" in json.dumps(result)
+
+    def test_suspect_allele_is_excluded_from_the_screened_alleles(self, tmp_path):
+        quality = tmp_path / "quality.json"
+        quality.write_text(json.dumps(
+            {"loci": {"adk": {"alleles": {"1": {"suspect": True}}}}}
+        ))
+        torch = self._torch(tmp_path, ">adk_1\nACGT\n>adk_2\nACGT\n")
+
+        screened, _ = self._run_fast(
+            torch, tmp_path, quality, exclude_suspect_alleles=True
+        )
+
+        assert "adk_1" not in screened
+        assert "adk_2" in screened
+
+    def test_nothing_is_excluded_without_a_flag(self, tmp_path):
+        quality = tmp_path / "quality.json"
+        quality.write_text(json.dumps({"loci": {"adk": {"suspect": True}}}))
+        torch = self._torch(tmp_path, ">adk_1\nACGT\n>fumC_1\nACGT\n")
+
+        screened, _ = self._run_fast(torch, tmp_path, quality)
+
+        assert "adk_1" in screened and "fumC_1" in screened
+
+    def test_no_quality_json_keeps_every_allele(self, tmp_path):
+        torch = self._torch(tmp_path, ">adk_1\nACGT\n>fumC_1\nACGT\n")
+        screened, _ = self._run_fast(
+            torch, tmp_path, None, exclude_suspect_loci=True
+        )
+        assert "adk_1" in screened and "fumC_1" in screened
+
+    def test_quality_report_schema_excludes_nothing(self, tmp_path):
+        """Known defect, pinned: the producer and consumer schemas disagree.
+
+        `torchbase/quality/report.py` writes `loci[x].suspect_pairs` plus a
+        `summary.suspect_loci` list; the filtering code (inherited verbatim from
+        the filter_alleles WDL task) reads `loci[x].suspect`,
+        `loci[x].alleles[y].suspect`, `loci[x].similarities` and
+        `profiles[p].suspect`. A real quality.json therefore excludes nothing,
+        whatever flags are passed. Reconciling the two is a schema decision, not
+        a refactor, so the current behaviour is asserted rather than changed.
+        """
+        quality = tmp_path / "quality.json"
+        quality.write_text(json.dumps(_make_quality_json(
+            suspect_loci=True, suspect_alleles=True
+        )))
+        torch = self._torch(tmp_path, ">adk_1\nACGT\n>adk_2\nACGT\n>fumC_1\nACGT\n")
+
+        screened, _ = self._run_fast(
+            torch, tmp_path, quality,
+            exclude_suspect_alleles=True, exclude_suspect_loci=True,
+            exclude_suspect_profiles=True,
+        )
+
+        assert "adk_1" in screened and "adk_2" in screened and "fumC_1" in screened
 
 
 class TestStrategyConflictWithEmbeddedWorkflow:

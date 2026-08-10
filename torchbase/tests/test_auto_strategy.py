@@ -17,6 +17,7 @@ Decision logic:
 import pytest
 import toml
 import csv
+import json
 from click.testing import CliRunner
 from unittest.mock import patch, MagicMock
 
@@ -812,8 +813,8 @@ class TestAutoStrategyIntegration:
         torch = Torch.load(torch_without_workflow)
         assert torch.workflow is None
 
-        with patch('torchbase.cli.run') as mock_run:
-            mock_run.return_value.returncode = 0
+        with patch('torchbase.typing_run.type_allelic') as mock_type:
+            mock_type.return_value = {"profile_id": "ST1", "method": {}}
 
             with patch('torchbase.cli._analyze_sequences') as mock_analyze:
                 mock_analyze.return_value = {
@@ -832,9 +833,12 @@ class TestAutoStrategyIntegration:
                     ]
                 )
 
-                # Should complete successfully
+                # The analysis result reaches the typing run as a concrete
+                # strategy, and its rationale is recorded in the profile.
                 assert mock_analyze.called
-                assert mock_run.called or result.exit_code == 0
+                assert result.exit_code == 0, result.output
+                assert mock_type.call_args[1]["strategy"] == "fast"
+                assert "contigs detected" in json.loads(result.output)["method"]["auto_decision"]
 
     def test_auto_strategy_full_pipeline_with_reads(
         self, torch_without_workflow, short_reads_file
@@ -845,8 +849,8 @@ class TestAutoStrategyIntegration:
         torch = Torch.load(torch_without_workflow)
         assert torch.workflow is None
 
-        with patch('torchbase.cli.run') as mock_run:
-            mock_run.return_value.returncode = 0
+        with patch('torchbase.typing_run.type_allelic') as mock_type:
+            mock_type.return_value = {"profile_id": "ST1", "method": {}}
 
             with patch('torchbase.cli._analyze_sequences') as mock_analyze:
                 mock_analyze.return_value = {
@@ -865,6 +869,7 @@ class TestAutoStrategyIntegration:
                     ]
                 )
 
-                # Should complete successfully
                 assert mock_analyze.called
-                assert mock_run.called or result.exit_code == 0
+                assert result.exit_code == 0, result.output
+                assert mock_type.call_args[1]["strategy"] == "balanced"
+                assert mock_type.call_args[1]["input_type"] == "reads"

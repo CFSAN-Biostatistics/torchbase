@@ -262,125 +262,48 @@ class TestWorkflowNamingValidation:
             assert invalid_name != "main.wdl"
 
 
-class TestDefaultWorkflowFallback:
-    """Test default workflow fetching when torch has no main.wdl."""
+class TestBuiltinTypingWhenTorchHasNoWorkflow:
+    """A torch with no main.wdl is typed by the built-in models.
 
-    def test_fetch_default_workflow_when_missing(
+    This replaces an older `workflows/default-workflow` registry fetch: with
+    the typing models built in there is nothing to fetch, and a workflow torch
+    pulled from a registry could not be interpreted by the package layer
+    anyway. `--workflow` remains available for running one deliberately.
+    """
+
+    def test_registry_is_not_consulted(
         self, torch_without_main_wdl, sample_reads_file
     ):
-        """Fetch workflows/default-workflow when torch has no main.wdl."""
         runner = CliRunner()
 
-        with patch('torchbase.torchfs.Torch') as mock_torch_class:
-            with patch(
-                'torchbase.registry.RegistryManager'
-            ) as mock_manager_class:
-                # Mock data torch (no workflow)
-                mock_data_torch = MagicMock()
-                mock_data_torch.workflow = None
-                mock_data_torch.path = torch_without_main_wdl
-                mock_data_torch.get_unified_files.return_value = (
-                    torch_without_main_wdl / "alleles.fasta",
-                    torch_without_main_wdl / "profiles.tsv"
+        with patch('torchbase.registry.RegistryManager') as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager_class.return_value = mock_manager
+            with patch('torchbase.typing_run.type_allelic') as mock_type:
+                mock_type.return_value = {"profile_id": "ST1"}
+                result = runner.invoke(
+                    cli,
+                    ['run', str(torch_without_main_wdl), '-r', str(sample_reads_file)]
                 )
 
-                # Mock default workflow torch
-                mock_default_torch = MagicMock()
-                default_wdl = Path(
-                    "/tmp/workflows/default-workflow/1.0.0.torch/main.wdl"
-                )
-                mock_default_torch.workflow = default_wdl
-                mock_default_torch.get_unified_files.return_value = (
-                    Path("/tmp/alleles.fasta"),
-                    Path("/tmp/profiles.tsv")
-                )
+        assert result.exit_code == 0, result.output
+        mock_manager.fetch_torch.assert_not_called()
+        mock_type.assert_called_once()
 
-                # Configure mock to return different torches
-                def load_side_effect(path):
-                    if "default-workflow" in str(path):
-                        return mock_default_torch
-                    return mock_data_torch
-
-                mock_torch_class.load.side_effect = load_side_effect
-
-                # Mock registry manager
-                mock_manager = MagicMock()
-                default_path = Path(
-                    "/tmp/workflows/default-workflow/1.0.0.torch"
-                )
-                mock_manager.fetch_torch.return_value = default_path
-                mock_manager_class.return_value = mock_manager
-
-                with patch('torchbase.cli.run'):
-                    runner.invoke(
-                        cli,
-                        [
-                            'run',
-                            str(torch_without_main_wdl),
-                            '-r',
-                            str(sample_reads_file)
-                        ]
-                    )
-
-                    # Should fetch default workflow
-                    mock_manager.fetch_torch.assert_called()
-                    call_args = mock_manager.fetch_torch.call_args
-                    assert ("default-workflow" in call_args[0][0] or
-                            "workflows" in str(call_args[0][0]))
-
-    def test_default_workflow_uses_latest_version(
+    def test_typed_with_the_selected_strategy(
         self, torch_without_main_wdl, sample_reads_file
     ):
-        """Default workflow fetches latest version."""
         runner = CliRunner()
 
-        with patch('torchbase.torchfs.Torch') as mock_torch_class:
-            with patch('torchbase.registry.RegistryManager') as mock_manager_class:
-                mock_data_torch = MagicMock()
-                mock_data_torch.workflow = None
-                mock_torch_class.load.return_value = mock_data_torch
+        with patch('torchbase.typing_run.type_allelic') as mock_type:
+            mock_type.return_value = {"profile_id": "ST1"}
+            result = runner.invoke(cli, [
+                'run', str(torch_without_main_wdl),
+                '-r', str(sample_reads_file), '--strategy', 'fast',
+            ])
 
-                mock_manager = MagicMock()
-                mock_manager_class.return_value = mock_manager
-
-                with patch('torchbase.cli.run'):
-                    _ = runner.invoke(
-                        cli,
-                        ['run', str(torch_without_main_wdl), '-r', str(sample_reads_file)]
-                    )
-
-                    # Should fetch with version=None (latest)
-                    if mock_manager.fetch_torch.called:
-                        call_args = mock_manager.fetch_torch.call_args
-                        # Version should be None or not specified
-                        assert call_args[1].get('version') is None or 'version' not in call_args[1]
-
-    def test_default_workflow_registry_path(
-        self, torch_without_main_wdl, sample_reads_file
-    ):
-        """Default workflow is fetched from workflows/default-workflow."""
-        runner = CliRunner()
-
-        with patch('torchbase.torchfs.Torch') as mock_torch_class:
-            with patch('torchbase.registry.RegistryManager') as mock_manager_class:
-                mock_data_torch = MagicMock()
-                mock_data_torch.workflow = None
-                mock_torch_class.load.return_value = mock_data_torch
-
-                mock_manager = MagicMock()
-                mock_manager_class.return_value = mock_manager
-
-                with patch('torchbase.cli.run'):
-                    _ = runner.invoke(
-                        cli,
-                        ['run', str(torch_without_main_wdl), '-r', str(sample_reads_file)]
-                    )
-
-                    # Should request workflows/default-workflow
-                    if mock_manager.fetch_torch.called:
-                        torch_name = mock_manager.fetch_torch.call_args[0][0]
-                        assert "workflows" in torch_name
-                        assert "default-workflow" in torch_name
+        assert result.exit_code == 0, result.output
+        assert mock_type.call_args[1]["strategy"] == "fast"
 
 
 class TestWorkflowOverride:
@@ -940,44 +863,31 @@ class TestWorkflowDiscoveryEdgeCases:
         assert main_wdl.exists()
         assert main_wdl.is_symlink()
 
-    def test_default_workflow_fetch_caching(
+    def test_repeated_runs_do_not_consult_the_registry(
         self, torch_without_main_wdl, sample_reads_file
     ):
-        """Default workflow is cached after first fetch."""
+        """Built-in typing needs no registry lookup, on any run.
+
+        Previously each run fetched `workflows/default-workflow`; the typing
+        models are built in, so nothing is fetched and there is nothing to
+        cache.
+        """
         runner = CliRunner()
 
-        with patch('torchbase.torchfs.Torch') as mock_torch_class:
-            with patch('torchbase.registry.RegistryManager') as mock_manager_class:
-                mock_torch = MagicMock()
-                mock_torch.workflow = None
-                mock_torch.get_unified_files.return_value = (
-                    Path("/tmp/alleles.fasta"),
-                    Path("/tmp/profiles.tsv")
-                )
-                mock_torch_class.load.return_value = mock_torch
+        with patch('torchbase.registry.RegistryManager') as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager_class.return_value = mock_manager
+            with patch('torchbase.typing_run.type_allelic') as mock_type:
+                mock_type.return_value = {"profile_id": "ST1"}
+                for _ in range(2):
+                    result = runner.invoke(cli, [
+                        'run', str(torch_without_main_wdl),
+                        '-r', str(sample_reads_file),
+                    ])
+                    assert result.exit_code == 0, result.output
 
-                mock_manager = MagicMock()
-                default_workflow_path = Path(
-                    "/tmp/workflows/default-workflow/1.0.0.torch"
-                )
-                mock_manager.fetch_torch.return_value = default_workflow_path
-                mock_manager_class.return_value = mock_manager
-
-                with patch('torchbase.cli.run'):
-                    # First run
-                    _ = runner.invoke(
-                        cli,
-                        ['run', str(torch_without_main_wdl), '-r', str(sample_reads_file)]
-                    )
-
-                    # Second run
-                    _ = runner.invoke(
-                        cli,
-                        ['run', str(torch_without_main_wdl), '-r', str(sample_reads_file)]
-                    )
-
-                    # fetch_torch should be called (caching is registry's responsibility)
-                    assert mock_manager.fetch_torch.called
+        assert mock_type.call_count == 2
+        mock_manager.fetch_torch.assert_not_called()
 
 
 class TestWorkflowIntegration:

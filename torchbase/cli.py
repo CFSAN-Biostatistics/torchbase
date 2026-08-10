@@ -568,6 +568,7 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
     from torchbase.torchfs import Torch
     from torchbase.registry import RegistryManager
     from torchbase.config import RegistryConfig
+    from torchbase import runner
 
     if not (contigs or reads or (paired1 and paired2) or interlaced or longreads):
         if (paired1 and not paired2) or (paired2 and not paired1):
@@ -626,135 +627,71 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         # Determine workflow file to use
         workflow_file = None
 
+        # A torch may supply its own workflow, or the user may point at one.
+        # Those produce whatever their author decided, so they are run and
+        # reported as-is. Everything else is a built-in typing model, which
+        # this layer dispatches and then interprets.
+        external_workflow = None
         if workflow:
-            # User specified custom workflow
             config = RegistryConfig.load()
             manager = RegistryManager(config)
             try:
                 workflow_path = manager.fetch_torch(workflow)
                 workflow_torch = Torch.load(workflow_path)
-                workflow_file = workflow_torch.workflow
+                external_workflow = workflow_torch.workflow
             except Exception as e:
                 raise click.ClickException(f"Failed to fetch workflow {workflow}: {str(e)}")
+            if not external_workflow:
+                raise click.ClickException(f"Workflow torch {workflow} has no workflow file")
         elif data_torch.workflow:
-            # Torch has embedded workflow
-            workflow_file = data_torch.workflow
-        elif data_torch.typing_model == "operon":
-            # Operon torches have exactly one implementation for v1 (§2,
-            # docs/operon-strategy-plan.md); route straight to the built-in
-            # workflow regardless of --strategy (already rejected above if
-            # explicitly given).
-            import torchbase
-            torchbase_dir = Path(torchbase.__file__).parent
-            builtin_workflow = torchbase_dir / 'workflows' / 'builtin' / 'operon_typing.wdl'
-            if not builtin_workflow.exists():
-                raise click.ClickException(
-                    f"Built-in operon workflow not found: {builtin_workflow}"
-                )
-            workflow_file = builtin_workflow
-        elif user_specified_strategy:
-            # User explicitly specified --strategy, use built-in workflow
-            # Note: 'auto' maps to one of the other strategies after analysis
-            strategy_to_workflow = {
-                'fast': 'fast_typing.wdl',
-                'balanced': 'balanced_typing.wdl',
-                'sensitive': 'sensitive_typing.wdl',
-                'auto': 'balanced_typing.wdl',  # fallback, should have been resolved above
-            }
-            workflow_filename = strategy_to_workflow.get(strategy)
-            if not workflow_filename:
-                raise click.ClickException(f"Unknown strategy: {strategy}")
+            external_workflow = data_torch.workflow
 
-            # Resolve workflow path relative to torchbase package
-            import torchbase
-            torchbase_dir = Path(torchbase.__file__).parent
-            builtin_workflow = torchbase_dir / 'workflows' / 'builtin' / workflow_filename
-
-            if not builtin_workflow.exists():
-                raise click.ClickException(
-                    f"Built-in workflow not found: {builtin_workflow}"
-                )
-
-            workflow_file = builtin_workflow
-        else:
-            # No --strategy specified and torch has no workflow
-            # Try default workflow for backward compatibility
-            try:
-                config = RegistryConfig.load()
-                manager = RegistryManager(config)
-                default_workflow_path = manager.fetch_torch("workflows/default-workflow")
-                workflow_torch = Torch.load(default_workflow_path)
-                workflow_file = workflow_torch.workflow
-            except Exception as e:
-                raise click.ClickException(
-                    f"Workflow not found in torch and default workflow fetch failed: {str(e)}"
-                )
-
-        # Validate workflow exists
-        if not workflow_file:
-            raise click.ClickException("No workflow found")
-
-        if isinstance(workflow_file, str):
-            workflow_file = Path(workflow_file)
-
-        # Generate unified torch data files for the workflow. Deferred until
-        # after workflow resolution so a rejected or misconfigured invocation
-        # never materializes them, and skipped entirely for operon torches,
-        # which consume the protein reference and profiles.tsv directly.
-        allele_fasta_path = profiles_table_path = None
-        if data_torch.typing_model != "operon":
-            try:
-                allele_fasta_path, profiles_table_path = data_torch.get_unified_files()
-            except Exception as e:
-                raise click.ClickException(f"Failed to generate torch data files: {str(e)}")
-
-        # Operon torches: the workflow does the protein search, and this layer
-        # interprets it. Nothing about the typing decision goes into a
-        # container (docs/operon-strategy-plan.md §4).
-        if data_torch.typing_model == "operon":
-            from torchbase import operon as operon_algorithm
-            from torchbase import runner
-
-            if not data_torch.operon_config:
-                raise click.ClickException(
-                    "Operon torch is missing its [operon] config block."
-                )
-            reference_rel = data_torch.operon_config.get("reference", {}).get("file")
-            if not reference_rel:
-                raise click.ClickException(
-                    "operon.reference.file not set in metadata.toml."
-                )
-            reference_path = data_torch.path / reference_rel
-            if not reference_path.exists():
-                raise click.ClickException(
-                    f"Operon reference file not found: {reference_path}"
-                )
-            if not contigs:
-                raise click.ClickException(
-                    "Operon typing runs on an assembly; pass -c/--contigs."
-                )
+        if external_workflow is None:
+            from torchbase import typing_run
 
             try:
-                outputs = runner.run_workflow(workflow_file, {
-                    "contigs": _input_path(contigs),
-                    "subunit_reference": str(reference_path),
-                })
-                calls = operon_algorithm.type_assembly(
-                    runner.require_file(outputs, "hits"),
-                    reference_path,
-                    data_torch.operon_config,
-                    profile_rows=data_torch.operon_profiles or (),
-                    scheme=data_torch.operon_config.get("scheme")
-                    or data_torch.path.parent.name,
-                )
-            except runner.WorkflowError as e:
+                if data_torch.typing_model == "operon":
+                    if not contigs:
+                        raise click.ClickException(
+                            "Operon typing runs on an assembly; pass -c/--contigs."
+                        )
+                    result = typing_run.type_operon(data_torch, _input_path(contigs))
+                else:
+                    query = contigs or reads or paired1 or interlaced or longreads
+                    input_type = (
+                        "contigs" if contigs else
+                        "reads" if reads else
+                        "paired" if paired1 else
+                        "interlaced" if interlaced else
+                        "longreads"
+                    )
+                    result = typing_run.type_allelic(
+                        data_torch,
+                        _input_path(query),
+                        input_type=input_type,
+                        strategy=strategy,
+                        quality_json=quality_json,
+                        exclude_suspect_alleles=(allele_filter == "exclude"),
+                        exclude_suspect_loci=exclude_suspect_loci,
+                        exclude_suspect_profiles=exclude_suspect_profiles,
+                    )
+                    if auto_decision_rationale and isinstance(result.get("method"), dict):
+                        result["method"]["auto_decision"] = auto_decision_rationale
+            except (typing_run.TypingError, runner.WorkflowError) as e:
                 raise click.ClickException(str(e))
 
-            runner.emit(calls, output)
-            return calls
+            runner.emit(result, output)
+            return result
 
-        # Handle embedded workflows with dynamic parameter parsing
-        elif data_torch.workflow:
+        workflow_file = Path(external_workflow)
+        try:
+            allele_fasta_path, profiles_table_path = data_torch.get_unified_files()
+        except Exception as e:
+            raise click.ClickException(f"Failed to generate torch data files: {str(e)}")
+
+        # Parse the workflow for its parameter schema and auto-provision the
+        # torch's data files into whatever names it declares.
+        if True:
             from torchbase.workflow_inspect import WDLParser
             from torchbase.workflow_params import (
                 parse_torch_args,
@@ -840,55 +777,8 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             for key, value in all_params.items():
                 miniwdl_cmd.append(f'{key}={value}')
 
-        else:
-            # Built-in workflow handling (original code path)
-            # Map torch file params to workflow-specific names
-            workflow_name = workflow_file.stem if isinstance(workflow_file, Path) else Path(workflow_file).stem
-
-            if workflow_name == 'fast_typing':
-                torch_params = ['allele_database=' + str(allele_fasta_path),
-                                'profiles_table=' + str(profiles_table_path)]
-            elif workflow_name == 'sensitive_typing':
-                torch_params = ['allele_database=' + str(allele_fasta_path),
-                                'profiles=' + str(profiles_table_path)]
-            else:  # balanced_typing or custom
-                torch_params = ['allele_fasta=' + str(allele_fasta_path),
-                                'profiles_table=' + str(profiles_table_path)]
-
-            # Build miniwdl command
-            miniwdl_cmd = ['miniwdl', 'run', str(workflow_file)]
-
-            # Add input files
-            if contigs:
-                miniwdl_cmd.append('contigs=' + _input_path(contigs))
-            if reads:
-                miniwdl_cmd.append('reads=' + _input_path(reads))
-            if paired1 and paired2:
-                miniwdl_cmd.extend(['paired1=' + _input_path(paired1),
-                                    'paired2=' + _input_path(paired2)])
-            if interlaced:
-                miniwdl_cmd.append('interlaced=' + _input_path(interlaced))
-            if longreads:
-                miniwdl_cmd.append('longreads=' + _input_path(longreads))
-
-            # Add torch data files (required by all workflows)
-            miniwdl_cmd.extend(torch_params)
-
-            # Add auto decision rationale if available
-            if auto_decision_rationale:
-                miniwdl_cmd.extend(['auto_decision=' + auto_decision_rationale])
-
-            # Add quality.json and suspect data flags
-            if quality_json:
-                miniwdl_cmd.extend(['quality_json=' + str(quality_json)])
-            if allele_filter == "exclude":
-                miniwdl_cmd.append('exclude_suspect_alleles=true')
-            if exclude_suspect_loci:
-                miniwdl_cmd.append('exclude_suspect_loci=true')
-            if exclude_suspect_profiles:
-                miniwdl_cmd.append('exclude_suspect_profiles=true')
-
-        # Execute workflow
+        # Execute a torch-supplied workflow. Its output shape is the torch
+        # author's business, so it is reported as-is rather than interpreted.
         result = run(miniwdl_cmd)
 
         if result.returncode != 0:
