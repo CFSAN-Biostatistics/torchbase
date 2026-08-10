@@ -33,9 +33,13 @@ corresponding knob is named in the docstring:
                              containment tests (StxTyper's slack, 30)
 """
 
+import csv
+import io
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
+
+PathLike = Union[str, "os.PathLike"]
 
 # Disruption/completeness status ladder, most to least complete. This is also
 # the priority order used to resolve overlapping candidate operons, and it
@@ -329,6 +333,9 @@ BLAST_COLUMNS = (
     "qstart", "qend", "sstart", "send", "evalue", "bitscore", "nident",
     "qlen", "slen", "sstrand", "qseq", "sseq",
 )
+
+# Reference-header layout when a torch does not declare one (§3.1).
+DEFAULT_HEADER_FORMAT = "accession|subunit_role|reference_subtype|class"
 
 
 def parse_fasta(text: str) -> Dict[str, str]:
@@ -1092,6 +1099,35 @@ def _partner_would_not_fit(candidate: Candidate, operon_cfg: dict) -> bool:
         if downstream_missing and tail_room <= missed_max:
             return True
     return False
+
+
+def type_assembly(
+    hits_tsv: PathLike,
+    subunit_reference: PathLike,
+    operon_cfg: dict,
+    profile_rows: Sequence[dict] = (),
+    scheme: str = "",
+) -> List[dict]:
+    """Operon calls for one assembly, from a search task's tabular output.
+
+    This is the package layer's entry point: the WDL layer runs the protein
+    search and hands back BLAST's table; every decision after that happens
+    here. `subunit_reference` is needed to know each reference protein's true
+    length — the reference set conventionally carries a terminal stop codon,
+    which is not part of the protein.
+    """
+    with io.open(str(subunit_reference)) as handle:
+        references = parse_fasta(handle.read())
+    with io.open(str(hits_tsv), newline="") as handle:
+        rows = [row for row in csv.reader(handle, delimiter="\t") if row]
+
+    header_format = operon_cfg.get("reference", {}).get(
+        "header_format", DEFAULT_HEADER_FORMAT
+    )
+    hsps = normalize_hsps(rows, references, header_format)
+    return report_operons(
+        hsps, operon_cfg, scheme=scheme, subtype_prefix=subtype_prefix(profile_rows)
+    )
 
 
 def report_operons(

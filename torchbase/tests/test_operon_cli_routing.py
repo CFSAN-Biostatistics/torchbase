@@ -1,10 +1,15 @@
 """Tests for CLI routing of operon torches (docs/operon-strategy-plan.md §2, §6).
 
 - `--strategy` is rejected for operon torches, mirroring the embedded-workflow guard.
-- Without `--strategy`, an operon torch routes to the built-in operon_typing.wdl.
+- Without `--strategy`, an operon torch routes to the built-in operon_typing.wdl,
+  which is a *compute-only* workflow: it takes the assembly and the protein
+  reference set, and nothing else. The typing decision happens at the package
+  layer afterwards, so the CLI must also interpret the workflow's output and
+  emit calls.
 """
 
 import csv
+import json
 from unittest.mock import patch
 
 import pytest
@@ -71,17 +76,55 @@ class TestOperonStrategyRejection:
 
 
 class TestOperonWorkflowRouting:
-    def test_routes_to_builtin_operon_workflow(self, operon_torch, contigs_file):
+    def _hits(self, tmp_path):
+        """A tabular hit no operon can be built from — routing is what's tested."""
+        hits = tmp_path / "hits.tsv"
+        hits.write_text("")
+        return hits
+
+    def test_routes_to_builtin_operon_workflow(self, operon_torch, contigs_file, tmp_path):
         runner = CliRunner()
-        with patch("torchbase.cli.run") as mock_run:
-            mock_run.return_value.returncode = 0
+        hits = self._hits(tmp_path)
+        with patch("torchbase.runner.run_workflow") as mock_run:
+            mock_run.return_value = {"hits": str(hits)}
             result = runner.invoke(
                 cli, ["run", str(operon_torch), "-c", str(contigs_file)]
             )
         assert result.exit_code == 0, result.output
         mock_run.assert_called_once()
-        miniwdl_cmd = mock_run.call_args[0][0]
-        assert any("operon_typing.wdl" in arg for arg in miniwdl_cmd)
-        assert any(arg.startswith("subunit_reference=") for arg in miniwdl_cmd)
-        assert any(arg.startswith("profiles_table=") for arg in miniwdl_cmd)
-        assert any(arg.startswith("operon_config_json=") for arg in miniwdl_cmd)
+        workflow, inputs = mock_run.call_args[0]
+        assert "operon_typing.wdl" in str(workflow)
+        assert set(inputs) == {"contigs", "subunit_reference"}
+        assert inputs["subunit_reference"].endswith("subunits.faa")
+
+    def test_calls_are_emitted_to_stdout(self, operon_torch, contigs_file, tmp_path):
+        runner = CliRunner()
+        with patch("torchbase.runner.run_workflow") as mock_run:
+            mock_run.return_value = {"hits": str(self._hits(tmp_path))}
+            result = runner.invoke(
+                cli, ["run", str(operon_torch), "-c", str(contigs_file)]
+            )
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == []
+
+    def test_calls_are_written_to_output_file(self, operon_torch, contigs_file, tmp_path):
+        runner = CliRunner()
+        destination = tmp_path / "calls.json"
+        with patch("torchbase.runner.run_workflow") as mock_run:
+            mock_run.return_value = {"hits": str(self._hits(tmp_path))}
+            result = runner.invoke(cli, [
+                "run", str(operon_torch), "-c", str(contigs_file),
+                "-o", str(destination),
+            ])
+        assert result.exit_code == 0, result.output
+        assert json.loads(destination.read_text()) == []
+
+    def test_missing_workflow_output_is_reported(self, operon_torch, contigs_file):
+        runner = CliRunner()
+        with patch("torchbase.runner.run_workflow") as mock_run:
+            mock_run.return_value = {}
+            result = runner.invoke(
+                cli, ["run", str(operon_torch), "-c", str(contigs_file)]
+            )
+        assert result.exit_code != 0
+        assert "hits" in result.output

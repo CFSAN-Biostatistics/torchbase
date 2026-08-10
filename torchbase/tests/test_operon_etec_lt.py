@@ -4,7 +4,7 @@
 an `[operon]` config by hand. If the same code types it, the config schema
 generalizes beyond stx — that is the plan's own gate for Phase 2 (§7).
 
-The fixtures are HSPs from real `tblastn` runs of that torch against:
+The fixtures are raw `tblastn` output from real runs of that torch against:
   h10407          the complete ETEC H10407 genome (GenBank FN649414-FN649418),
                   the reference LT1 strain — the elt operon sits on a plasmid
   lt2_synthetic   a synthetic contig: the real elt operon of LT2-producing
@@ -15,6 +15,9 @@ What this scheme exercises that stx does not: overlapping subunit genes
 (`eltA`/`eltB` overlap, hence `intergenic_min` below zero), a single class with
 no super-class pattern, and a residue table keyed on five positions across both
 subunits.
+
+The fixtures are the raw tabular output of the `search_subunits` task, so the
+test runs the same package-layer path as `torchbase run`.
 """
 
 import gzip
@@ -23,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from torchbase.operon import HSP, report_operons, subtype_prefix
+from torchbase.operon import type_assembly
 from torchbase.torchfs import Torch
 
 FIXTURES = Path(__file__).parent / "fixtures" / "etec_lt"
@@ -35,14 +38,17 @@ def torch():
     return Torch.load(TORCH)
 
 
-def calls_for(torch, fixture):
-    with gzip.open(FIXTURES / fixture, "rt") as f:
-        hsps = [HSP.from_dict(raw) for raw in json.load(f)]
-    return report_operons(
-        hsps,
+def calls_for(torch, fixture, tmp_path):
+    hits = tmp_path / "hits.tsv"
+    with gzip.open(FIXTURES / fixture, "rb") as source:
+        hits.write_bytes(source.read())
+    reference = torch.path / torch.operon_config["reference"]["file"]
+    return type_assembly(
+        hits,
+        reference,
         torch.operon_config,
+        profile_rows=torch.operon_profiles,
         scheme="etec-lt",
-        subtype_prefix=subtype_prefix(torch.operon_profiles),
     )
 
 
@@ -67,8 +73,8 @@ class TestEtecLtTorch:
 
 
 class TestEtecLtCalls:
-    def test_h10407_is_lt1(self, torch):
-        call, = calls_for(torch, "h10407_hsps.json.gz")
+    def test_h10407_is_lt1(self, torch, tmp_path):
+        call, = calls_for(torch, "h10407_hits.tsv.gz", tmp_path)
         assert call["profile_id"] == "LT1"
         assert call["operon_status"] == "COMPLETE"
         assert call["operon"]["residue_evidence"] == {
@@ -81,8 +87,8 @@ class TestEtecLtCalls:
         assert call["operon"]["contig"] == "FN649417.1"
         assert call["operon"]["intergenic_bp"] < 0
 
-    def test_lt2_signature_operon_is_lt2(self, torch):
-        call, = calls_for(torch, "lt2_synthetic_hsps.json.gz")
+    def test_lt2_signature_operon_is_lt2(self, torch, tmp_path):
+        call, = calls_for(torch, "lt2_synthetic_hits.tsv.gz", tmp_path)
         assert call["profile_id"] == "LT2"
         assert call["operon_status"] == "COMPLETE"
         assert call["operon"]["residue_evidence"] == {

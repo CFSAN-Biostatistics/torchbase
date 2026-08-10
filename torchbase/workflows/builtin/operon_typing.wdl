@@ -1,55 +1,33 @@
 version 1.0
 
-# Built-in workflow for the "operon" typing model (docs/operon-strategy-plan.md).
-# This is the *only* operon implementation for v1 — `--strategy` does not
-# apply here (torchbase/cli.py rejects it for operon torches) because the
-# typing model and the speed/accuracy axis are orthogonal (§2). Output is a
-# list, not a single profile: multiple operons per assembly are normal
-# (e.g. an isolate carrying both stx1 and stx2).
+# Compute step for the "operon" typing model (docs/operon-strategy-plan.md §4):
+# translated protein search of an operon's subunit reference set against an
+# assembly. That is the only expensive part of operon typing, and the only part
+# that needs a tool container.
+#
+# Everything downstream — frameshift stitching, locus reduction, synteny
+# pairing, thresholds, residue tables, the status ladder — is interpretation,
+# not compute, and runs at the package layer in torchbase/operon.py. The
+# workflow therefore emits raw BLAST tabular output; `torchbase run` turns it
+# into operon calls. Keeping the search behind one task boundary is also what
+# makes swapping the search engine later (e.g. a protein-mode Phraya) a
+# single-task change.
 
 import "tasks/protein_search.wdl" as search
-import "tasks/operon_assembly.wdl" as assembly
-import "tasks/operon_call.wdl" as scoring
 
 workflow operon_typing {
     input {
         File contigs
         File subunit_reference
-        File profiles_table
-        File operon_config_json
-        # torchbase/operon.py — the typing algorithm itself, localized into
-        # each task's container so the workflow and the unit tests run the
-        # same code (see tasks/*.wdl headers).
-        File operon_module
-        String scheme = ""
     }
 
     call search.search_subunits {
         input:
             contigs = contigs,
-            subunit_reference = subunit_reference,
-            operon_config_json = operon_config_json,
-            operon_module = operon_module,
-            gapextend = 2
-    }
-
-    call assembly.assemble_operons {
-        input:
-            hsps = search_subunits.hsps,
-            operon_config_json = operon_config_json,
-            operon_module = operon_module
-    }
-
-    call scoring.call_operons {
-        input:
-            candidates = assemble_operons.candidates,
-            operon_config_json = operon_config_json,
-            profiles_table = profiles_table,
-            operon_module = operon_module,
-            scheme = scheme
+            subunit_reference = subunit_reference
     }
 
     output {
-        File result = call_operons.result
+        File hits = search_subunits.hits
     }
 }

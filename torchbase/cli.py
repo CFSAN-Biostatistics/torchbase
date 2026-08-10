@@ -708,10 +708,13 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
             except Exception as e:
                 raise click.ClickException(f"Failed to generate torch data files: {str(e)}")
 
-        # Operon torches need explicit File inputs miniwdl can resolve: the
-        # protein reference set, the profiles.tsv manifest, and the
-        # [operon] config serialized to JSON (§6, docs/operon-strategy-plan.md).
+        # Operon torches: the workflow does the protein search, and this layer
+        # interprets it. Nothing about the typing decision goes into a
+        # container (docs/operon-strategy-plan.md §4).
         if data_torch.typing_model == "operon":
+            from torchbase import operon as operon_algorithm
+            from torchbase import runner
+
             if not data_torch.operon_config:
                 raise click.ClickException(
                     "Operon torch is missing its [operon] config block."
@@ -726,36 +729,29 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
                 raise click.ClickException(
                     f"Operon reference file not found: {reference_path}"
                 )
-
-            profiles_path = data_torch.path / "profiles.tsv"
-            if not profiles_path.exists():
-                raise click.ClickException(
-                    f"Operon profiles.tsv not found: {profiles_path}"
-                )
-
-            operon_config_dir = Path(tempfile.mkdtemp(prefix="torchbase-operon-"))
-            operon_config_path = operon_config_dir / "operon_config.json"
-            with open(operon_config_path, "w") as f:
-                json.dump(data_torch.operon_config, f)
-
             if not contigs:
                 raise click.ClickException(
                     "Operon typing runs on an assembly; pass -c/--contigs."
                 )
 
-            # The algorithm module itself is a workflow input: the tasks
-            # import it inside their containers instead of re-implementing it.
-            import torchbase.operon
-            operon_module_path = Path(torchbase.operon.__file__)
+            try:
+                outputs = runner.run_workflow(workflow_file, {
+                    "contigs": _input_path(contigs),
+                    "subunit_reference": str(reference_path),
+                })
+                calls = operon_algorithm.type_assembly(
+                    runner.require_file(outputs, "hits"),
+                    reference_path,
+                    data_torch.operon_config,
+                    profile_rows=data_torch.operon_profiles or (),
+                    scheme=data_torch.operon_config.get("scheme")
+                    or data_torch.path.parent.name,
+                )
+            except runner.WorkflowError as e:
+                raise click.ClickException(str(e))
 
-            miniwdl_cmd = [
-                'miniwdl', 'run', str(workflow_file),
-                'contigs=' + _input_path(contigs),
-                'subunit_reference=' + str(reference_path),
-                'profiles_table=' + str(profiles_path),
-                'operon_config_json=' + str(operon_config_path),
-                'operon_module=' + str(operon_module_path),
-            ]
+            runner.emit(calls, output)
+            return calls
 
         # Handle embedded workflows with dynamic parameter parsing
         elif data_torch.workflow:
@@ -912,9 +908,6 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
         ):
             if temp_path is not None and temp_path.exists():
                 temp_path.unlink()
-        operon_config_dir = locals().get('operon_config_dir')
-        if operon_config_dir is not None:
-            shutil.rmtree(operon_config_dir, ignore_errors=True)
 
 
 
