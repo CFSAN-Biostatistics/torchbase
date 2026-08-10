@@ -34,7 +34,7 @@ corresponding knob is named in the docstring:
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 # Disruption/completeness status ladder, most to least complete. This is also
