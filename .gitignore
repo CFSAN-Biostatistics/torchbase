@@ -110,8 +110,9 @@ ENV/
 # Claude Code
 .claude/
 
-# Generated torch output from local conversion runs (large, non-reproducible)
-/torches/
+# Torch packages are data, not code: they live in the torches repository,
+# checked out here as the torches/ submodule. Nothing torch-shaped belongs in
+# this repository — see CLAUDE.md, "Where torches live".
 
 # uv is not this project's dependency manager (pyproject.toml + pip, see
 # CLAUDE.md); a lock file here is a local side effect of `uv pip install`.

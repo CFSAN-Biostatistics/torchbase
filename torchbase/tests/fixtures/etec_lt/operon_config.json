@@ -1,0 +1,97 @@
+{
+  "generalized_classes": {
+    "I": [
+      "1",
+      "2"
+    ]
+  },
+  "identity_thresholds": {
+    "I": 0.95,
+    "default": 0.95
+  },
+  "intergenic_max": 36,
+  "intergenic_min": -12,
+  "intergenic_relax_factor": 2,
+  "min_operon_identity": 0.8,
+  "overlap_slack": 30,
+  "reference": {
+    "file": "_resources/subunits.faa",
+    "header_format": "accession|subunit_role|reference_subtype|class"
+  },
+  "require_same_contig": true,
+  "require_same_strand": true,
+  "residue_rules": [
+    {
+      "class": "I",
+      "fallback": "I",
+      "positions": [
+        {
+          "index": 207,
+          "subunit": "A"
+        },
+        {
+          "index": 213,
+          "subunit": "A"
+        },
+        {
+          "index": 230,
+          "subunit": "A"
+        },
+        {
+          "index": 241,
+          "subunit": "A"
+        },
+        {
+          "index": 95,
+          "subunit": "B"
+        }
+      ],
+      "table": [
+        {
+          "call": "1",
+          "residues": [
+            [
+              "S"
+            ],
+            [
+              "G"
+            ],
+            [
+              "K"
+            ],
+            [
+              "S"
+            ],
+            [
+              "T"
+            ]
+          ]
+        },
+        {
+          "call": "2",
+          "residues": [
+            [
+              "L"
+            ],
+            [
+              "D"
+            ],
+            [
+              "E"
+            ],
+            [
+              "T"
+            ],
+            [
+              "A"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "subunit_order": [
+    "A",
+    "B"
+  ]
+}

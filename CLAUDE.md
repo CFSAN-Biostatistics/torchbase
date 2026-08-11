@@ -65,6 +65,38 @@ torches have exactly one built-in workflow and reject `--strategy`:
    - Automatic file decompression/compression to zstandard format
 
 
+### Where torches live
+
+**Torch packages are data, not code, and do not belong in this repository.**
+They have their own provenance, licensing and release cadence, and the
+architecture keeps distribution (IPFS, registries) separate from the package.
+
+They live in the torches repository, checked out here as a submodule:
+
+```bash
+git submodule update --init          # torches/ = git@git.fda.gov:justin.payne/torches.git
+torchbase run torches/cfsan/etec-lt/1.0.0.torch -c assembly.fasta -o calls.json
+torchtools convert stxtyper --download --output torches/   # new torches land there
+```
+
+That submodule is internal; nothing in it is visible from the public GitHub
+mirror of this package, which is deliberate — it is not where torches are
+hosted.
+
+What stays in this repository:
+
+- `examples/simple_mlst`, `examples/multi_organism` — synthetic scaffolding
+  (21 bp toy sequences) that documents the torch layout and is asserted on by
+  `tests/test_synthetic_example_torches.py`. Not real torches, not
+  distributable.
+- `torchbase/tests/fixtures/**` — captured tool output plus the minimal
+  reference data and config needed to exercise the algorithms offline, so the
+  parity tests run without the submodule (and therefore in CI, which cannot
+  reach the internal host). These are test inputs, not torches.
+
+If you find yourself committing a `<version>.torch/` directory here, it goes in
+the torches repository instead.
+
 ### Torch Package Structure
 
 **Single-Scheme Format** (simple, most common):
