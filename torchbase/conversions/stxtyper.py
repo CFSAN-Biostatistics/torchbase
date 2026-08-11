@@ -94,7 +94,7 @@ def download_sources(dest_dir: Path) -> dict:
     stx_prot_path = fetch_file(DOWNLOAD_SOURCES["stx_prot"], dest_dir / "stx.prot")
     version_path = fetch_file(DOWNLOAD_SOURCES["version"], dest_dir / "version.txt")
     stxtyper_version = version_path.read_text().strip()
-    return {"stx_prot": open(stx_prot_path), "stxtyper_version": stxtyper_version}
+    return {"stx_prot": open(stx_prot_path, encoding="utf-8"), "stxtyper_version": stxtyper_version}
 
 
 def _collapse_class(type_code: str) -> str:
@@ -217,7 +217,7 @@ def convert_local(
     resources_dir.mkdir(exist_ok=True)
 
     subunits_path = resources_dir / "subunits.faa"
-    with open(subunits_path, "w") as f:
+    with open(subunits_path, "w", encoding="utf-8") as f:
         for rec in records:
             header = "|".join([
                 rec["accession"], rec["subunit_role"],
@@ -228,7 +228,7 @@ def convert_local(
 
     profile_rows = _build_profiles(records)
     profiles_path = torch_dir / "profiles.tsv"
-    with open(profiles_path, "w") as f:
+    with open(profiles_path, "w", encoding="utf-8") as f:
         f.write("subtype\tclass\tsubunit_A\tsubunit_B\n")
         for row in profile_rows:
             f.write(f"{row['subtype']}\t{row['class']}\t{row['subunit_A']}\t{row['subunit_B']}\n")
@@ -281,7 +281,7 @@ def convert_local(
             "residue_rules": RESIDUE_RULES,
         },
     }
-    with open(torch_dir / "metadata.toml", "w") as f:
+    with open(torch_dir / "metadata.toml", "w", encoding="utf-8") as f:
         toml.dump(metadata, f)
     _log.debug("  metadata.toml written")
 

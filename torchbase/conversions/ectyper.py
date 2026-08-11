@@ -69,8 +69,8 @@ def download_sources(dest_dir: Path) -> dict:
     prof_path = fetch_file(prof_url, dest_dir / prof_name)
 
     return {
-        "db_fasta": open(db_path),
-        "profiles": open(prof_path),
+        "db_fasta": open(db_path, encoding="utf-8"),
+        "profiles": open(prof_path, encoding="utf-8"),
     }
 
 
@@ -180,12 +180,12 @@ def convert_local(
             ],
         },
     }
-    with open(torch_dir / "metadata.toml", "w") as f:
+    with open(torch_dir / "metadata.toml", "w", encoding="utf-8") as f:
         toml.dump(metadata, f)
     _log.debug("  metadata.toml written")
 
     quality_report = _build_quality_report(locus_names, quality_results, kmer_size, overlap_threshold)
-    with open(torch_dir / "quality.json", "w") as f:
+    with open(torch_dir / "quality.json", "w", encoding="utf-8") as f:
         json.dump(quality_report, f, indent=2)
     _log.debug("  quality.json written")
 
@@ -232,14 +232,14 @@ def _split_combined_fasta(db_fasta_fh: IO, resources_dir: Path) -> List[str]:
     for key, fname in bucket_map.items():
         if buckets[key]:
             dest = resources_dir / f"{fname}.fasta"
-            dest.write_text("\n".join(buckets[key]) + "\n")
+            dest.write_text("\n".join(buckets[key]) + "\n", encoding="utf-8")
             locus_names.append(fname)
 
     return locus_names
 
 
 def _write_stub_profiles(profiles_path: Path) -> None:
-    with open(profiles_path, "w", newline="") as f:
+    with open(profiles_path, "w", newline="", encoding="utf-8") as f:
         csv.writer(f, delimiter="\t").writerow(["Serotype", "O", "H"])
 
 

@@ -199,7 +199,7 @@ def convert_all(
     metadata["provenance"]["databases"] = provenance_entries
 
     metadata_path = torch_dir / "metadata.toml"
-    with open(metadata_path, "w") as f:
+    with open(metadata_path, "w", encoding="utf-8") as f:
         toml.dump(metadata, f)
 
     quality_report = _generate_quality_report(
@@ -209,7 +209,7 @@ def convert_all(
         quality_results=all_quality_results,
     )
     quality_path = torch_dir / "quality.json"
-    with open(quality_path, "w") as f:
+    with open(quality_path, "w", encoding="utf-8") as f:
         json.dump(quality_report, f, indent=2)
 
     _log.info("Torch written: %d schemes, %d total loci → %s",
@@ -394,7 +394,7 @@ def convert_schemes(
     )
 
     metadata_path = torch_dir / "metadata.toml"
-    with open(metadata_path, "w") as f:
+    with open(metadata_path, "w", encoding="utf-8") as f:
         toml.dump(metadata, f)
 
     quality_report = _generate_quality_report(
@@ -404,7 +404,7 @@ def convert_schemes(
         quality_results=all_quality_results,
     )
     quality_path = torch_dir / "quality.json"
-    with open(quality_path, "w") as f:
+    with open(quality_path, "w", encoding="utf-8") as f:
         json.dump(quality_report, f, indent=2)
 
     _log.info("Torch written: %s", torch_dir)
@@ -426,12 +426,12 @@ def _sanitize_name(name: str) -> str:
 def _write_profiles_tsv(profiles_path: Path, profiles: List[Dict[str, str]]) -> None:
     """Write profiles.tsv file."""
     if not profiles:
-        with open(profiles_path, "w") as f:
+        with open(profiles_path, "w", encoding="utf-8") as f:
             f.write("ST\n")
         return
 
     fieldnames = list(profiles[0].keys())
-    with open(profiles_path, "w", newline="") as f:
+    with open(profiles_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
         writer.writerows(profiles)

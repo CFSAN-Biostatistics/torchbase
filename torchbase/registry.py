@@ -464,7 +464,7 @@ class RegistryManager:
                 suffix=".toml.tmp"
             )
             try:
-                with open(fd, 'w') as f:
+                with open(fd, 'w', encoding="utf-8") as f:
                     toml.dump(existing_config, f)
                 # Atomic rename
                 shutil.move(temp_path, config_path)

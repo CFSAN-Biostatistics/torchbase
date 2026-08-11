@@ -54,7 +54,7 @@ def download_sources(dest_dir: Path) -> dict:
     sequence_files = []
     for filename, url in DOWNLOAD_SOURCES["sequences"]:
         path = fetch_file(url, dest_dir / filename)
-        sequence_files.append(open(path))
+        sequence_files.append(open(path, encoding="utf-8"))
     return {"sequences": sequence_files}
 
 
@@ -155,12 +155,12 @@ def convert_local(
             ],
         },
     }
-    with open(torch_dir / "metadata.toml", "w") as f:
+    with open(torch_dir / "metadata.toml", "w", encoding="utf-8") as f:
         toml.dump(metadata, f)
     _log.debug("  metadata.toml written")
 
     quality_report = _build_quality_report(locus_names, quality_results, kmer_size, overlap_threshold)
-    with open(torch_dir / "quality.json", "w") as f:
+    with open(torch_dir / "quality.json", "w", encoding="utf-8") as f:
         json.dump(quality_report, f, indent=2)
     _log.debug("  quality.json written")
 
@@ -169,7 +169,7 @@ def convert_local(
 
 
 def _write_stub_profiles(profiles_path: Path, locus_names: List[str]) -> None:
-    with open(profiles_path, "w", newline="") as f:
+    with open(profiles_path, "w", newline="", encoding="utf-8") as f:
         csv.writer(f, delimiter="\t").writerow(["Serotype", "O", "H"])
 
 

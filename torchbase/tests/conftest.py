@@ -31,7 +31,7 @@ backends = ["local"]
 allow_docker_fallback = false
 """
 
-    config_file.write_text(config_content)
+    config_file.write_text(config_content, encoding="utf-8")
 
     # Set environment variable to use this config
     os.environ["WDL_CFG_PATH"] = str(config_file)
@@ -107,7 +107,7 @@ def multi_scheme_torch_tempdir():
         }
 
         # Write metadata
-        with open(torch_path / "metadata.toml", "w") as f:
+        with open(torch_path / "metadata.toml", "w", encoding="utf-8") as f:
             toml.dump(metadata, f)
 
         # Create E. coli scheme
@@ -121,7 +121,7 @@ def multi_scheme_torch_tempdir():
             ["2", "2", "2"],
             ["3", "3", "1"]
         ]
-        with open(ecoli_path / "profiles.tsv", "w", newline="") as f:
+        with open(ecoli_path / "profiles.tsv", "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(ecoli_profiles)
 
@@ -129,10 +129,10 @@ def multi_scheme_torch_tempdir():
         alleles_path = ecoli_path / "alleles"
         alleles_path.mkdir(parents=True, exist_ok=True)
 
-        with open(alleles_path / "dinB.fasta", "w") as f:
+        with open(alleles_path / "dinB.fasta", "w", encoding="utf-8") as f:
             f.write(">dinB_1\nACGT\n>dinB_2\nTGCA\n")
 
-        with open(alleles_path / "icdA.fasta", "w") as f:
+        with open(alleles_path / "icdA.fasta", "w", encoding="utf-8") as f:
             f.write(">icdA_1\nGATC\n")
 
         # Create Salmonella scheme
@@ -146,7 +146,7 @@ def multi_scheme_torch_tempdir():
             ["2", "1", "2"],
             ["3", "2", "1"]
         ]
-        with open(salmonella_path / "profiles.tsv", "w", newline="") as f:
+        with open(salmonella_path / "profiles.tsv", "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(salmonella_profiles)
 
@@ -154,10 +154,10 @@ def multi_scheme_torch_tempdir():
         alleles_path = salmonella_path / "alleles"
         alleles_path.mkdir(parents=True, exist_ok=True)
 
-        with open(alleles_path / "adk.fasta", "w") as f:
+        with open(alleles_path / "adk.fasta", "w", encoding="utf-8") as f:
             f.write(">adk_1\nCCCC\n>adk_2\nGGGG\n")
 
-        with open(alleles_path / "fumC.fasta", "w") as f:
+        with open(alleles_path / "fumC.fasta", "w", encoding="utf-8") as f:
             f.write(">fumC_1\nAAAA\n>fumC_2\nTTTT\n")
 
         yield torch_path
@@ -210,7 +210,7 @@ def single_scheme_torch_tempdir():
         }
 
         # Write metadata
-        with open(torch_path / "metadata.toml", "w") as f:
+        with open(torch_path / "metadata.toml", "w", encoding="utf-8") as f:
             toml.dump(metadata, f)
 
         # Create profiles
@@ -220,7 +220,7 @@ def single_scheme_torch_tempdir():
             ["2", "2", "2"],
             ["3", "3", "1"]
         ]
-        with open(torch_path / "legacy.profiles.tsv", "w", newline="") as f:
+        with open(torch_path / "legacy.profiles.tsv", "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f, delimiter="\t")
             writer.writerows(profiles)
 
@@ -228,17 +228,17 @@ def single_scheme_torch_tempdir():
         resources_path = torch_path / "_resources"
         resources_path.mkdir(parents=True, exist_ok=True)
 
-        with open(resources_path / "dinB.fasta", "w") as f:
+        with open(resources_path / "dinB.fasta", "w", encoding="utf-8") as f:
             f.write(">dinB_1\nACGT\n>dinB_2\nTGCA\n")
 
-        with open(resources_path / "icdA.fasta", "w") as f:
+        with open(resources_path / "icdA.fasta", "w", encoding="utf-8") as f:
             f.write(">icdA_1\nGATC\n")
 
         # Create workflow files (placeholders)
-        with open(torch_path / "legacy.wdl", "w") as f:
+        with open(torch_path / "legacy.wdl", "w", encoding="utf-8") as f:
             f.write("workflow legacy { }\n")
 
-        with open(torch_path / "legacy.build.wdl", "w") as f:
+        with open(torch_path / "legacy.build.wdl", "w", encoding="utf-8") as f:
             f.write("workflow build { }\n")
 
         yield torch_path

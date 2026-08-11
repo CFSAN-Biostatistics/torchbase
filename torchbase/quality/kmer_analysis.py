@@ -40,7 +40,7 @@ def _parse_fasta(fasta_path):
     current_id = None
     current_seq = []
 
-    with open(fasta_path, "r") as f:
+    with open(fasta_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:

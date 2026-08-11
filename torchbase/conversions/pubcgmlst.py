@@ -122,7 +122,7 @@ def convert_local(
         },
     }
 
-    with open(torch_dir / "metadata.toml", "w") as f:
+    with open(torch_dir / "metadata.toml", "w", encoding="utf-8") as f:
         toml.dump(metadata, f)
     _log.debug("  metadata.toml written")
 
@@ -145,7 +145,7 @@ def convert_local(
         },
     }
 
-    with open(torch_dir / "quality.json", "w") as f:
+    with open(torch_dir / "quality.json", "w", encoding="utf-8") as f:
         json.dump(quality_report, f, indent=2)
     _log.debug("  quality.json written")
 

@@ -143,7 +143,7 @@ def _info(torch):
     if not metadata_path.exists():
         raise click.ClickException(f"metadata.toml not found at {torch_path}")
 
-    with open(metadata_path) as f:
+    with open(metadata_path, encoding="utf-8") as f:
         metadata = toml.load(f)
 
     rows = []
@@ -701,7 +701,7 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
 
             # Parse the embedded WDL to extract parameter schema
             try:
-                with open(workflow_file) as wf:
+                with open(workflow_file, encoding="utf-8") as wf:
                     parser = WDLParser(wf.read(), wdl_dir=workflow_file.parent)
             except (FileNotFoundError, IOError) as e:
                 raise click.ClickException(f"Failed to read workflow file {workflow_file}: {str(e)}")
@@ -870,7 +870,7 @@ def compress_torch_alleles(torch_path, level, keep_original):
 @click.pass_context
 def call(ctx, schema, json_profile=None):
     "Load a profile definition and make a profile call from allele calls"
-    with open(schema, newline="") as schema_file:
+    with open(schema, newline="", encoding="utf-8") as schema_file:
         reader = csv.reader(schema_file, delimiter='\t')
         schema = Profile.parse(tuple(reader))
     schema = Profile.parse()
@@ -898,7 +898,7 @@ def _version(torch, bump="patch", checkpoint=None):
     if not metadata_path.exists():
         raise click.ClickException(f"metadata.toml not found at {torch_path}")
 
-    with open(metadata_path) as f:
+    with open(metadata_path, encoding="utf-8") as f:
         metadata = toml.load(f)
 
     version_str = str(metadata.get("version", "1.0.0"))
@@ -919,7 +919,7 @@ def _version(torch, bump="patch", checkpoint=None):
     new_version = ".".join(str(p) for p in parts)
     metadata["version"] = new_version
 
-    with open(metadata_path, "w") as f:
+    with open(metadata_path, "w", encoding="utf-8") as f:
         toml.dump(metadata, f)
 
     click.echo(f"Bumped version {version_str} -> {new_version}")
@@ -1430,7 +1430,7 @@ def _keygen(namespace, output, yubikey, slot, pin):
         click.echo(f"Private key: {priv_path}")
         click.echo(f"Public key:  {pub_path}")
 
-    pub_text = pub_path.read_text().strip()
+    pub_text = pub_path.read_text(encoding="utf-8").strip()
     click.echo(f"\nPublic key (add to key registry):\n{namespace} = \"{pub_text}\"")
 
 
@@ -1443,7 +1443,7 @@ def _pubkey(namespace, key_dir):
     pub_path = key_dir / f"{namespace}.pub"
     if not pub_path.exists():
         raise click.ClickException(f"No public key found at {pub_path}")
-    click.echo(pub_path.read_text().strip())
+    click.echo(pub_path.read_text(encoding="utf-8").strip())
 
 
 @tools.command("sign")
@@ -1588,7 +1588,7 @@ def _namespace_register(namespace, ipfs_node, ipfs_port, submit_to, yubikey, slo
     existing["namespaces"][namespace] = ipns_address
     fd, tmp = tempfile.mkstemp(dir=config_path.parent, suffix=".toml.tmp")
     try:
-        with open(fd, "w") as f:
+        with open(fd, "w", encoding="utf-8") as f:
             _toml.dump(existing, f)
         shutil.move(tmp, config_path)
     except Exception:

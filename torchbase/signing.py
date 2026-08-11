@@ -168,7 +168,7 @@ def generate_software_keypair(namespace: str, output_dir: Path) -> tuple:
 
     pub_bytes = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     pub_path = output_dir / f"{namespace}.pub"
-    pub_path.write_text(_b64u(pub_bytes) + "\n")
+    pub_path.write_text(_b64u(pub_bytes) + "\n", encoding="utf-8")
 
     return priv_path, pub_path
 
@@ -209,7 +209,7 @@ def setup_yubikey_slot(
         conn.close()
 
     pub_path = output_dir / f"{namespace}.pub"
-    pub_path.write_text(_b64u(pub_bytes) + "\n")
+    pub_path.write_text(_b64u(pub_bytes) + "\n", encoding="utf-8")
     return pub_path
 
 
@@ -271,7 +271,7 @@ def sign_torch(torch_path: Path, signer) -> Path:
         },
     }
     sig_path = torch_path / "signature.toml"
-    with open(sig_path, "w") as f:
+    with open(sig_path, "w", encoding="utf-8") as f:
         toml.dump(sig_data, f)
     return sig_path
 
@@ -403,7 +403,7 @@ def fetch_key_registry(
         registry = toml.loads(response.text)
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(cache_path, "w") as f:
+    with open(cache_path, "w", encoding="utf-8") as f:
         toml.dump(registry, f)
 
     return registry.get("keys", {})

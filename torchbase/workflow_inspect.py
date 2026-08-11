@@ -369,7 +369,7 @@ def inspect_workflow(workflow_path: str, verbose: bool = False) -> str:
 
     # Read WDL content
     try:
-        with open(wdl_path, 'r') as f:
+        with open(wdl_path, 'r', encoding="utf-8") as f:
             wdl_content = f.read()
     except Exception as e:
         raise IOError(f"Failed to read workflow: {e}")

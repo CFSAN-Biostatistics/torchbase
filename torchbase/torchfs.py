@@ -108,14 +108,14 @@ def download_torch(cid, node=node, port=port):
 
 @handle_ipfs_errors
 def register_torch(path, node=node, port=port):
-    with open(path / "metadata.toml") as md_file:
+    with open(path / "metadata.toml", encoding="utf-8") as md_file:
         metadata = toml.load(md_file)
     metadata["manifest"]["resources"] = []
     for child in (path / "_resources").iterdir():
         if child.is_file():
             if not child.name.startswith("."):
                 metadata["manifest"]["resources"].append(child.name)
-    with open(path / "metadata.toml", "w") as md_file:
+    with open(path / "metadata.toml", "w", encoding="utf-8") as md_file:
         toml.dump(metadata, md_file)
 
 
@@ -193,7 +193,7 @@ class Torch:
         if not metadata_path.exists():
             raise FileNotFoundError(f"metadata.toml not found at {path}")
 
-        with open(metadata_path) as metadata_file:
+        with open(metadata_path, encoding="utf-8") as metadata_file:
             metadata = toml.load(metadata_file)
 
         # Sanity checks on path vs metadata
@@ -269,7 +269,7 @@ class Torch:
                     f"{profiles_file}"
                 )
 
-            with open(profiles_file, newline="") as f:
+            with open(profiles_file, newline="", encoding="utf-8") as f:
                 schema = Profile.parse(
                     scheme_name,
                     csv.reader(f, delimiter="\t")
@@ -350,14 +350,14 @@ class Torch:
             from torchbase.operon import validate_operon_metadata
 
             operon_config = metadata.get("operon", {})
-            with open(profiles_path, newline="") as profile_file:
+            with open(profiles_path, newline="", encoding="utf-8") as profile_file:
                 operon_profiles = list(
                     csv.DictReader(profile_file, delimiter="\t")
                 )
             validate_operon_metadata(operon_config, operon_profiles)
             profile = None
         else:
-            with open(profiles_path, newline="") as profile_file:
+            with open(profiles_path, newline="", encoding="utf-8") as profile_file:
                 profile = Profile.parse(
                     f"{metadata['name']}_{metadata['version']}",
                     csv.reader(profile_file, delimiter="\t"),
@@ -446,7 +446,7 @@ class Torch:
         Raises:
             ValueError: If a scheme has no allele files
         """
-        with open(output_path, 'w') as out_f:
+        with open(output_path, 'w', encoding="utf-8") as out_f:
             # Process schemes in sorted order for consistency
             for scheme_name in sorted(self.scheme_references.keys()):
                 allele_files = self.scheme_references[scheme_name]
@@ -477,7 +477,7 @@ class Torch:
         Args:
             output_path: Path to write concatenated FASTA
         """
-        with open(output_path, 'w') as out_f:
+        with open(output_path, 'w', encoding="utf-8") as out_f:
             for ref_file in sorted(self.references):
                 with _open_fasta_file(ref_file) as in_f:
                     out_f.write(in_f.read())
@@ -540,7 +540,7 @@ class Torch:
                 header.append(f"{scheme_name}_{locus}")
 
         # Write header
-        with open(output_path, 'w') as out_f:
+        with open(output_path, 'w', encoding="utf-8") as out_f:
             out_f.write('\t'.join(header) + '\n')
 
             # Write profiles from each scheme
@@ -578,7 +578,7 @@ class Torch:
 
         loci = [h for h in self.profile.profiles[0].header if h != 'ST']
 
-        with open(output_path, 'w', newline='') as out_f:
+        with open(output_path, 'w', newline='', encoding="utf-8") as out_f:
             out_f.write('\t'.join(['ST'] + loci) + '\n')
             for profile in self.profile.profiles:
                 row = [str(profile.profile)]
