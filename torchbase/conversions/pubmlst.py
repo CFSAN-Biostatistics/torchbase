@@ -43,6 +43,8 @@ def convert_all(
     cutoff_date: date = PUBMLST_LICENSE_CUTOFF,
     skip_errors: bool = True,
     verify: Any = True,
+    database_names: Optional[Sequence[str]] = None,
+    scheme_description_pattern: Optional[str] = None,
 ) -> str:
     """Convert every scheme in every PubMLST database into one multi-scheme torch.
 
@@ -62,6 +64,14 @@ def convert_all(
         cutoff_date: Exclude alleles entered after this date
         skip_errors: If True, log failures per scheme and continue rather than
             aborting the whole run
+        database_names: Restrict to these seqdef database names (e.g.
+            "pubmlst_salmonella_seqdef"). Unset fetches every database, which
+            is the whole of PubMLST -- tens of gigabytes.
+        scheme_description_pattern: Regex tested against each scheme's
+            description (case-insensitive `re.match`). Unset includes every
+            scheme a database exposes (MLST, cgMLST, wgMLST, ...); pass
+            `r"^MLST\b"` to keep only classic 7-gene-style MLST schemes and
+            skip a database's much larger cgMLST/wgMLST schemes.
 
     Returns:
         Path to the created torch directory
@@ -77,7 +87,7 @@ def convert_all(
     output_path.mkdir(parents=True, exist_ok=True)
 
     client = BIGSdbClient(base_url, verify=verify)
-    torch_version = cutoff_date.strftime("%Y.%-m.%-d")
+    torch_version = "{}.{}.{}".format(cutoff_date.year, cutoff_date.month, cutoff_date.day)
 
     torch_dir = output_path / namespace / torch_name / f"{torch_version}.torch"
     torch_dir.mkdir(parents=True, exist_ok=True)
@@ -86,6 +96,13 @@ def convert_all(
 
     _log.info("Starting full PubMLST conversion (cutoff: %s)", cutoff_date)
     databases = client.list_databases()
+    if database_names is not None:
+        wanted = set(database_names)
+        databases = [d for d in databases if d.name in wanted]
+    description_filter = (
+        re.compile(scheme_description_pattern, re.IGNORECASE)
+        if scheme_description_pattern else None
+    )
 
     all_quality_results: Dict[str, Any] = {
         "total_loci": 0,
@@ -104,6 +121,10 @@ def convert_all(
         db_bar.set_postfix(db=database[-30:])
         try:
             scheme_list = client.list_schemes(database)
+            if description_filter is not None:
+                scheme_list = [
+                    s for s in scheme_list if description_filter.match(s.description.strip())
+                ]
         except Exception as exc:
             if skip_errors:
                 _log.warning("skipping database %s: %s", database, exc)
@@ -306,7 +327,7 @@ def convert_schemes(
 
     # Version is derived from the cutoff date to make the data snapshot explicit.
     # e.g. cutoff_date=2024-12-31 → version "2024.12.31"
-    torch_version = cutoff_date.strftime("%Y.%-m.%-d")
+    torch_version = "{}.{}.{}".format(cutoff_date.year, cutoff_date.month, cutoff_date.day)
 
     # Fetch all schemes first so we can derive a name before creating dirs.
     schemes: List[SchemeData] = []

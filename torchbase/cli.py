@@ -965,6 +965,15 @@ def convert(ctx, verbose):
 @click.option("--all", "fetch_all", is_flag=True, default=False,
               help="Fetch every scheme from every database and produce one "
                    "'pubmlst' torch.  Mutually exclusive with --scheme-id.")
+@click.option("--database", "database_names", multiple=True,
+              help="With --all: restrict to these seqdef database names "
+                   "(e.g. pubmlst_salmonella_seqdef). Repeat to include "
+                   "several. Unset fetches every database.")
+@click.option("--scheme-description", default=None, metavar="REGEX",
+              help="With --all: only include schemes whose description "
+                   "matches this regex (case-insensitive, anchored at the "
+                   "start). e.g. '^MLST\\\\b' for classic 7-gene-style MLST, "
+                   "skipping a database's cgMLST/wgMLST schemes.")
 @click.option("--output", required=True, help="Output directory for torch")
 @click.option("--name", default=None,
               help="Torch name (default: derived from first scheme, or 'pubmlst' with --all)")
@@ -987,7 +996,8 @@ def convert(ctx, verbose):
                    "environments where certificate inspection cannot be bypassed; prefer "
                    "--ca-bundle instead.")
 @click.pass_context
-def _convert_pubmlst(ctx, url, scheme_id, fetch_all, output, name, namespace, cutoff_date,
+def _convert_pubmlst(ctx, url, scheme_id, fetch_all, database_names, scheme_description,
+                     output, name, namespace, cutoff_date,
                      no_skip_errors, kmer_size, overlap_threshold, duplicate_threshold,
                      ca_bundle, no_ssl_verify):
     """Convert PubMLST schemes into a multi-scheme torch.
@@ -995,8 +1005,13 @@ def _convert_pubmlst(ctx, url, scheme_id, fetch_all, output, name, namespace, cu
     Pass --scheme-id multiple times to bundle specific schemes (e.g., MLST and
     cgMLST for one organism) into a single torch.
 
-    Pass --all to enumerate every scheme across every PubMLST database and
-    produce a single "pubmlst" torch containing all of them.
+    Pass --all to enumerate schemes across PubMLST databases into one merged
+    torch. Unrestricted, that is every scheme of every database (tens of
+    gigabytes); scope it with --database (repeatable) and/or
+    --scheme-description (e.g. '^MLST\\b' for classic 7-gene MLST, excluding
+    a database's larger cgMLST/wgMLST schemes) -- e.g. the foodborne-pathogen
+    "pubmlst/mlst" torch this project ships was built with a --database list
+    and --scheme-description '^MLST\\b'.
 
     The default cutoff date (2024-12-31) restricts alleles to those with
     freely-redistributable terms, matching the dataset snapshot bundled in
@@ -1042,6 +1057,8 @@ def _convert_pubmlst(ctx, url, scheme_id, fetch_all, output, name, namespace, cu
                 cutoff_date=cutoff,
                 skip_errors=not no_skip_errors,
                 verify=verify,
+                database_names=list(database_names) or None,
+                scheme_description_pattern=scheme_description,
             )
         else:
             torch_path = convert_schemes(

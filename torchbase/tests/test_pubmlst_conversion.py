@@ -723,3 +723,96 @@ class TestErrorHandling:
         """Should handle invalid output path gracefully."""
         # Test expects proper error message
         assert True  # Placeholder
+
+
+class TestConvertAllFiltering:
+    """convert_all can be scoped to specific databases and scheme descriptions.
+
+    Without a filter it enumerates every scheme of every PubMLST database
+    (tens of gigabytes); a torch like "pubmlst/mlst" -- classic 7-gene MLST
+    across the foodborne organisms of interest, not every scheme of every
+    organism -- needs both restrictions.
+    """
+
+    def _scheme_data(self, scheme_id, name):
+        metadata = SchemeMetadata(scheme_id=scheme_id, name=name)
+        loci = [LocusData("adk", "Adenylate kinase", 100, datetime.now())]
+        profiles = ProfileTable(
+            profiles=[{"ST": "1", "adk": "1"}], row_count=1, last_updated=datetime.now()
+        )
+        return SchemeData(metadata=metadata, loci=loci, profiles=profiles)
+
+    @patch('torchbase.conversions.pubmlst.BIGSdbClient')
+    def test_database_names_restricts_which_databases_are_queried(
+        self, mock_client_class, tmp_path
+    ):
+        from torchbase.conversions.bigsdb_client import DatabaseInfo, SchemeInfo
+        from torchbase.conversions.pubmlst import convert_all
+
+        mock_client = Mock()
+        mock_client.list_databases.return_value = [
+            DatabaseInfo("pubmlst_salmonella_seqdef", "Salmonella"),
+            DatabaseInfo("pubmlst_neisseria_seqdef", "Neisseria"),
+        ]
+        mock_client.list_schemes.return_value = [SchemeInfo(1, "MLST")]
+        mock_client.fetch_scheme.return_value = self._scheme_data(1, "MLST")
+        mock_client_class.return_value = mock_client
+
+        convert_all(
+            base_url="https://rest.pubmlst.org",
+            output_path=tmp_path,
+            database_names=["pubmlst_salmonella_seqdef"],
+        )
+
+        assert mock_client.list_schemes.call_count == 1
+        mock_client.list_schemes.assert_called_once_with("pubmlst_salmonella_seqdef")
+
+    @patch('torchbase.conversions.pubmlst.BIGSdbClient')
+    def test_scheme_description_pattern_excludes_non_matching_schemes(
+        self, mock_client_class, tmp_path
+    ):
+        from torchbase.conversions.bigsdb_client import DatabaseInfo, SchemeInfo
+        from torchbase.conversions.pubmlst import convert_all
+
+        mock_client = Mock()
+        mock_client.list_databases.return_value = [
+            DatabaseInfo("pubmlst_salmonella_seqdef", "Salmonella"),
+        ]
+        mock_client.list_schemes.return_value = [
+            SchemeInfo(1, "MLST"),
+            SchemeInfo(2, "cgMLST"),
+            SchemeInfo(3, "ribosomal MLST"),
+        ]
+        mock_client.fetch_scheme.side_effect = lambda db, sid, cutoff_date=None: (
+            self._scheme_data(sid, {1: "MLST", 2: "cgMLST", 3: "ribosomal MLST"}[sid])
+        )
+        mock_client_class.return_value = mock_client
+
+        convert_all(
+            base_url="https://rest.pubmlst.org",
+            output_path=tmp_path,
+            scheme_description_pattern=r"^MLST\b",
+        )
+
+        fetched_ids = sorted(c.args[1] for c in mock_client.fetch_scheme.call_args_list)
+        assert fetched_ids == [1]  # MLST matches; cgMLST and "ribosomal MLST" do not
+
+    @patch('torchbase.conversions.pubmlst.BIGSdbClient')
+    def test_unfiltered_call_is_unchanged(self, mock_client_class, tmp_path):
+        """No filter arguments -> every database, every scheme (existing behaviour)."""
+        from torchbase.conversions.bigsdb_client import DatabaseInfo, SchemeInfo
+        from torchbase.conversions.pubmlst import convert_all
+
+        mock_client = Mock()
+        mock_client.list_databases.return_value = [
+            DatabaseInfo("pubmlst_salmonella_seqdef", "Salmonella"),
+            DatabaseInfo("pubmlst_neisseria_seqdef", "Neisseria"),
+        ]
+        mock_client.list_schemes.return_value = [SchemeInfo(1, "MLST"), SchemeInfo(2, "cgMLST")]
+        mock_client.fetch_scheme.return_value = self._scheme_data(1, "MLST")
+        mock_client_class.return_value = mock_client
+
+        convert_all(base_url="https://rest.pubmlst.org", output_path=tmp_path)
+
+        assert mock_client.list_schemes.call_count == 2  # both databases queried
+        assert mock_client.fetch_scheme.call_count == 4  # both schemes, both databases
