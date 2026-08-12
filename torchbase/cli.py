@@ -1305,12 +1305,15 @@ def _chewie_ns():
               help="Download FASTA files from CFSAN-Biostatistics/ShigaTyper")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="shigatyper", show_default=True, help="Torch name")
+@click.option("--namespace", default="hfp", show_default=True,
+              help="Torch namespace. Names the authority for the data: 'hfp' "
+                   "because ShigaTyper is an FDA Human Foods Program product.")
 @click.option("--version", default="1.0.0", show_default=True, help="Torch version")
 @click.option("--kmer-size", default=13, type=int, show_default=True)
 @click.option("--overlap-threshold", default=0.90, type=float, show_default=True)
 @click.option("--duplicate-threshold", default=0.95, type=float, show_default=True)
 @click.pass_context
-def _shigatyper(ctx, sequences, profiles, output, name, version, kmer_size, overlap_threshold, duplicate_threshold, download):
+def _shigatyper(ctx, sequences, profiles, output, name, namespace, version, kmer_size, overlap_threshold, duplicate_threshold, download):
     "Create a torch from ShigaTyper's database."
     from torchbase.conversions.log import setup_logging
     setup_logging(ctx.obj.get("verbosity", 0))
@@ -1332,6 +1335,7 @@ def _shigatyper(ctx, sequences, profiles, output, name, version, kmer_size, over
             profiles_file=profiles,
             output_path=output,
             name=name,
+            namespace=namespace,
             version=version,
             kmer_size=kmer_size,
             overlap_threshold=overlap_threshold,

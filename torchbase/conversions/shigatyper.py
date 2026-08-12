@@ -1,14 +1,31 @@
 """ShigaTyper converter — local FASTA files to torch format.
 
-ShigaTyper identifies Shigella serotypes by typing wzx/wzy (O-antigen)
-and fliC (H-antigen) loci.
+ShigaTyper identifies Shigella serotypes from presence/absence of marker
+genes (species markers `ipaH`/`ipaB`/`EclacY`/`cadA`, plus per-serotype
+O-antigen `wzx`/`wzy` and accessory loci) mapped by minimap2, evaluated
+through a checkpoint decision cascade — not a lookup table, and not (yet)
+something any built-in typing model in torchbase runs. See "Known gap" below.
 
 If a profiles TSV is provided it is used as-is; otherwise a stub header-only
 table is written so the torch is immediately loadable.
 
 Usage:
-    torchtools convert shigatyper wzx.fasta wzy.fasta fliC.fasta
-    torchtools convert shigatyper --profiles serotypes.tsv wzx.fasta wzy.fasta fliC.fasta
+    torchtools convert shigatyper --download
+    torchtools convert shigatyper --profiles serotypes.tsv markers/*.fasta
+
+Known gap: this converter produces the reference data — one locus per marker,
+matching ShigaTyper's presence/absence model — but no typing model in
+torchbase implements ShigaTyper's actual decision cascade (checkpoints,
+mpileup depth-ratio tie-breaks, hard-coded exceptions like the S. boydii
+9/15 vs EIEC check). The allelic model's Profile matching does not apply: a
+serotype call here is not "which allele at each locus", it is a rule cascade
+over which markers are present at all, evaluated in a fixed order with
+several special cases. Encoding that cascade as profiles.tsv rows would be
+fabricating logic that does not exist yet, and — per docs/operon-strategy-plan.md
+§9 risk 1 — a plausible-looking wrong answer at full confidence is worse than
+no answer. Treat this torch as reference data pending a real "shigatyper"
+typing model (transcribed from shigatyper.py's `predict` cascade, the way
+`torchbase/operon.py` transcribes StxTyper's), not as ready to type from.
 """
 
 import csv
@@ -28,33 +45,64 @@ _log = get_logger("shigatyper")
 
 TAXA = ["Shigella"]
 
-_SHIGATYPER_RAW = "https://raw.githubusercontent.com/CFSAN-Biostatistics/ShigaTyper/master"
+_SHIGATYPER_RAW = "https://raw.githubusercontent.com/CFSAN-Biostatistics/shigatyper/master"
 
 DOWNLOAD_SOURCES = {
-    "repo": "https://github.com/CFSAN-Biostatistics/ShigaTyper",
-    "sequences": [
-        ("wzx.fasta", f"{_SHIGATYPER_RAW}/shigatyper/data/wzx.fasta"),
-        ("wzy.fasta", f"{_SHIGATYPER_RAW}/shigatyper/data/wzy.fasta"),
-        ("fliC.fasta", f"{_SHIGATYPER_RAW}/shigatyper/data/fliC.fasta"),
-    ],
-    # Serotype profiles are not available as a standalone TSV in the repo;
-    # provide --profiles manually.
+    "repo": "https://github.com/CFSAN-Biostatistics/shigatyper",
+    # Upstream consolidated its per-locus FASTA files (wzx.fasta, wzy.fasta,
+    # fliC.fasta -- none of which exist any more) into one multi-marker
+    # reference. download_sources() below splits it back into one file per
+    # marker so each becomes its own presence/absence locus, matching
+    # convert_local's one-file-per-locus convention.
+    "reference": (
+        "ShigellaRef5.fasta",
+        f"{_SHIGATYPER_RAW}/shigatyper/resources/ShigellaRef5.fasta",
+    ),
+    # Serotype profiles are not available as a standalone TSV in the repo,
+    # and could not be transcribed as one even if they were -- see the
+    # "Known gap" note above. Provide --profiles manually if you have one.
 }
 
 
+def _parse_fasta_records(text: str):
+    """Yield (header, sequence) pairs from FASTA text."""
+    header, chunks = None, []
+    for line in text.splitlines():
+        if line.startswith(">"):
+            if header is not None:
+                yield header, "".join(chunks)
+            header, chunks = line[1:].split()[0], []
+        elif header is not None:
+            chunks.append(line.strip())
+    if header is not None:
+        yield header, "".join(chunks)
+
+
 def download_sources(dest_dir: Path) -> dict:
-    """Download canonical ShigaTyper FASTA files to dest_dir.
+    """Download ShigaTyper's consolidated reference and split it into
+    one-marker-per-file loci.
 
     Returns {'sequences': [list of open file handles]}.
-    Serotype profiles must be provided separately via --profiles.
+    Serotype profiles must be provided separately via --profiles, if at all
+    (see the module docstring's "Known gap").
     """
     from torchbase.conversions import fetch_file
 
     dest_dir = Path(dest_dir)
+    filename, url = DOWNLOAD_SOURCES["reference"]
+    combined = fetch_file(url, dest_dir / filename)
+
+    markers_dir = dest_dir / "markers"
+    markers_dir.mkdir(exist_ok=True)
     sequence_files = []
-    for filename, url in DOWNLOAD_SOURCES["sequences"]:
-        path = fetch_file(url, dest_dir / filename)
-        sequence_files.append(open(path, encoding="utf-8"))
+    for marker, sequence in _parse_fasta_records(
+        combined.read_text(encoding="utf-8")
+    ):
+        marker_path = markers_dir / f"{marker}.fasta"
+        marker_path.write_text(f">{marker}\n{sequence}\n", encoding="utf-8")
+        sequence_files.append(open(marker_path, encoding="utf-8"))
+
+    _log.info("split %s into %d marker loci", filename, len(sequence_files))
     return {"sequences": sequence_files}
 
 
@@ -62,7 +110,7 @@ def convert_local(
     sequence_files: List[IO],
     profiles_file: Optional[IO] = None,
     output_path: str = ".",
-    namespace: str = "shigatyper",
+    namespace: str = "hfp",
     name: str = "shigatyper",
     version: str = "1.0.0",
     kmer_size: int = 13,
@@ -77,7 +125,12 @@ def convert_local(
             Columns: Serotype, O, H (at minimum). If absent, a stub
             header-only table is written so the torch is loadable.
         output_path: Directory in which to create the torch.
-        namespace: Torch namespace (default: "shigatyper").
+        namespace: Torch namespace. Defaults to "hfp": a torch's namespace
+            names the authority for the data, and the ShigaTyper database is
+            an FDA Human Foods Program product
+            (github.com/CFSAN-Biostatistics/ShigaTyper, from the center's
+            former name). Compare "ncbi" for the StxTyper conversion and
+            "pubmlst" for PubMLST schemes.
         name: Torch name (default: "shigatyper").
         version: Torch version string.
         kmer_size: K-mer size for quality analysis.
@@ -133,13 +186,22 @@ def convert_local(
         "version_info": {"strategy": "snapshot", "timestamp": now},
         "typing": {
             "method": "serotyping",
-            "scheme": "Shigella O:H antigen",
+            "scheme": "Shigella O:H antigen (presence/absence marker set)",
             "loci_count": len(locus_names),
             "profiles_count": profile_count,
         },
         "description": {
-            "short": "ShigaTyper Shigella serotyping torch",
-            "long": "Shigella serotyping based on wzx/wzy O-antigen and fliC H-antigen loci",
+            "short": "ShigaTyper Shigella serotyping reference (no built-in typing model yet)",
+            "long": (
+                "Species and O-antigen/accessory marker sequences from "
+                "CFSAN-Biostatistics/shigatyper's ShigellaRef5.fasta, one "
+                "locus per marker. ShigaTyper calls a serotype via a "
+                "checkpoint decision cascade over marker presence plus "
+                "mpileup depth-ratio tie-breaks -- not a per-locus allele "
+                "lookup -- and no typing model in torchbase implements that "
+                "cascade yet. This torch is reference data pending one; see "
+                "the module docstring in torchbase/conversions/shigatyper.py."
+            ),
             "taxa": TAXA,
         },
         "data_quality": {

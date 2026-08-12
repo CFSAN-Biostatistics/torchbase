@@ -75,7 +75,7 @@ They live in the torches repository, checked out here as a submodule:
 
 ```bash
 git submodule update --init          # torches/ = git@git.fda.gov:justin.payne/torches.git
-torchbase run torches/cfsan/etec-lt/1.0.0.torch -c assembly.fasta -o calls.json
+torchbase run torches/hfp/etec-lt/1.0.0.torch -c assembly.fasta -o calls.json
 torchtools convert stxtyper --download --output torches/   # new torches land there
 ```
 
