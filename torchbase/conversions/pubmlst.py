@@ -31,6 +31,14 @@ _log = get_logger("pubmlst")
 # PubMLST changed licensing for data submitted from this date onward.
 PUBMLST_LICENSE_CUTOFF = date(2024, 12, 31)
 
+# analyze_locus (quality/kmer_analysis.py) is O(n^2) pairwise Jaccard over a
+# locus's alleles, in pure Python. A PubMLST scheme locus can hold thousands
+# of alleles (E. coli's fumC: 2602) -- millions of comparisons, observed to
+# run for hours on one locus. Above this count the comparison is skipped
+# rather than run unbounded; the locus is still fully present in
+# _resources/, it just carries no suspect-pair analysis.
+DEFAULT_MAX_ALLELES_FOR_QUALITY = 800
+
 
 def convert_all(
     base_url: str,
@@ -45,6 +53,7 @@ def convert_all(
     verify: Any = True,
     database_names: Optional[Sequence[str]] = None,
     scheme_description_pattern: Optional[str] = None,
+    max_alleles_for_quality: int = DEFAULT_MAX_ALLELES_FOR_QUALITY,
 ) -> str:
     """Convert every scheme in every PubMLST database into one multi-scheme torch.
 
@@ -182,6 +191,7 @@ def convert_all(
                 kmer_size=kmer_size,
                 overlap_threshold=overlap_threshold,
                 duplicate_threshold=duplicate_threshold,
+                max_alleles_for_quality=max_alleles_for_quality,
             )
             _log_quality_results(_log, scheme_key, q)
             all_quality_results["total_loci"] += q["total_loci"]
@@ -189,6 +199,9 @@ def convert_all(
             all_quality_results["duplicate_pairs"].extend(q["duplicate_pairs"])
             all_quality_results["loci_results"].update(
                 {f"{scheme_key}/{k}": v for k, v in q["loci_results"].items()}
+            )
+            all_quality_results.setdefault("skipped_loci", []).extend(
+                {**s, "locus": f"{scheme_key}/{s['locus']}"} for s in q.get("skipped_loci", [])
             )
 
             scheme_registry[scheme_key] = {
@@ -276,6 +289,7 @@ def convert_schemes(
     duplicate_threshold: float = 0.95,
     cutoff_date: date = PUBMLST_LICENSE_CUTOFF,
     verify: Any = True,
+    max_alleles_for_quality: int = DEFAULT_MAX_ALLELES_FOR_QUALITY,
 ) -> str:
     """Convert one or more PubMLST schemes into a multi-scheme torch.
 
@@ -386,12 +400,14 @@ def convert_schemes(
             kmer_size=kmer_size,
             overlap_threshold=overlap_threshold,
             duplicate_threshold=duplicate_threshold,
+            max_alleles_for_quality=max_alleles_for_quality,
         )
         _log_quality_results(_log, scheme_key, q)
         all_quality_results["total_loci"] += q["total_loci"]
         all_quality_results["similar_pairs"].extend(q["similar_pairs"])
         all_quality_results["duplicate_pairs"].extend(q["duplicate_pairs"])
         all_quality_results["loci_results"].update(q["loci_results"])
+        all_quality_results.setdefault("skipped_loci", []).extend(q.get("skipped_loci", []))
 
         scheme_registry[scheme_key] = {
             "organism": scheme_data.metadata.name,
@@ -472,13 +488,28 @@ def _log_quality_results(log, scheme_key: str, q: Dict[str, Any]) -> None:
                     pair.get("similarity", 0), pair.get("issue_type", "?"))
 
 
+# analyze_locus is O(n^2) pairwise Jaccard over a locus's alleles, in pure
+# Python. A PubMLST scheme locus can hold thousands of alleles (E. coli's
+# fumC: 2602) -- millions of comparisons, observed to run for hours on one
+# locus. Above this count the comparison is skipped rather than run
+# unbounded; the locus is still fully present in _resources/, it just carries
+# no suspect-pair analysis. See DEFAULT_MAX_ALLELES_FOR_QUALITY near the
+# top of this module.
+
+
 def _run_quality_analysis(
     alleles_dir: Path,
     kmer_size: int = 13,
     overlap_threshold: float = 0.90,
     duplicate_threshold: float = 0.95,
+    max_alleles_for_quality: int = DEFAULT_MAX_ALLELES_FOR_QUALITY,
 ) -> Dict[str, Any]:
-    """Run k-mer quality analysis on all loci in alleles_dir."""
+    """Run k-mer quality analysis on all loci in alleles_dir.
+
+    Loci with more than `max_alleles_for_quality` alleles are skipped (see
+    the module-level note on `analyze_locus`'s complexity) and recorded in
+    `results["skipped_loci"]` rather than silently dropped.
+    """
     from torchbase.quality.kmer_analysis import analyze_locus
 
     results: Dict[str, Any] = {
@@ -486,10 +517,24 @@ def _run_quality_analysis(
         "similar_pairs": [],
         "duplicate_pairs": [],
         "loci_results": {},
+        "skipped_loci": [],
     }
 
     for fasta_file in sorted(alleles_dir.glob("*.fasta")):
         locus_name = fasta_file.stem
+        allele_count = sum(1 for line in fasta_file.open() if line.startswith(">"))
+        if allele_count > max_alleles_for_quality:
+            _log.warning(
+                "    %s: %d alleles exceeds max_alleles_for_quality=%d, "
+                "skipping pairwise similarity analysis (O(n^2) on this many "
+                "alleles is impractical)",
+                locus_name, allele_count, max_alleles_for_quality,
+            )
+            results["skipped_loci"].append({
+                "locus": locus_name, "allele_count": allele_count,
+            })
+            continue
+
         report = analyze_locus(
             fasta_file,
             k_size=kmer_size,
@@ -603,6 +648,10 @@ def _generate_quality_report(
                 "total_loci": quality_results.get("total_loci", 0),
                 "similar_pairs": quality_results.get("similar_pairs", []),
                 "duplicate_pairs": quality_results.get("duplicate_pairs", []),
+                # Loci whose allele count made pairwise similarity analysis
+                # impractical (see DEFAULT_MAX_ALLELES_FOR_QUALITY); present
+                # in the torch's reference data but not analysed here.
+                "skipped_loci": quality_results.get("skipped_loci", []),
             },
         },
     }

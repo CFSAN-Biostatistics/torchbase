@@ -987,6 +987,12 @@ def convert(ctx, verbose):
 @click.option("--kmer-size", default=13, type=int, help="K-mer size for quality analysis")
 @click.option("--overlap-threshold", default=0.90, type=float, help="Overlap threshold for quality analysis")
 @click.option("--duplicate-threshold", default=0.95, type=float, help="Duplicate threshold for quality analysis")
+@click.option("--max-alleles-for-quality", default=800, type=int, show_default=True,
+              help="Skip pairwise similarity analysis for a locus with more "
+                   "alleles than this. That analysis is O(n^2); PubMLST loci "
+                   "commonly hold thousands of alleles, where it can run for "
+                   "hours. Skipped loci are still fully present in the torch, "
+                   "just without a quality.json suspect-pair analysis.")
 @click.option("--ca-bundle", default=None, metavar="PATH",
               help="Path to a CA certificate bundle file (useful when a VPN or corporate proxy "
                    "performs SSL inspection). The REQUESTS_CA_BUNDLE environment variable is "
@@ -999,7 +1005,7 @@ def convert(ctx, verbose):
 def _convert_pubmlst(ctx, url, scheme_id, fetch_all, database_names, scheme_description,
                      output, name, namespace, cutoff_date,
                      no_skip_errors, kmer_size, overlap_threshold, duplicate_threshold,
-                     ca_bundle, no_ssl_verify):
+                     max_alleles_for_quality, ca_bundle, no_ssl_verify):
     """Convert PubMLST schemes into a multi-scheme torch.
 
     Pass --scheme-id multiple times to bundle specific schemes (e.g., MLST and
@@ -1054,6 +1060,7 @@ def _convert_pubmlst(ctx, url, scheme_id, fetch_all, database_names, scheme_desc
                 kmer_size=kmer_size,
                 overlap_threshold=overlap_threshold,
                 duplicate_threshold=duplicate_threshold,
+                max_alleles_for_quality=max_alleles_for_quality,
                 cutoff_date=cutoff,
                 skip_errors=not no_skip_errors,
                 verify=verify,
@@ -1070,6 +1077,7 @@ def _convert_pubmlst(ctx, url, scheme_id, fetch_all, database_names, scheme_desc
                 kmer_size=kmer_size,
                 overlap_threshold=overlap_threshold,
                 duplicate_threshold=duplicate_threshold,
+                max_alleles_for_quality=max_alleles_for_quality,
                 cutoff_date=cutoff,
                 verify=verify,
             )

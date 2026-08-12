@@ -816,3 +816,46 @@ class TestConvertAllFiltering:
 
         assert mock_client.list_schemes.call_count == 2  # both databases queried
         assert mock_client.fetch_scheme.call_count == 4  # both schemes, both databases
+
+
+class TestQualityAnalysisSkipsLargeLoci:
+    """analyze_locus is O(n^2); a PubMLST locus can hold thousands of
+    alleles, where full pairwise comparison has been observed to run for
+    hours. Loci above the cap are skipped, not silently slow."""
+
+    def _fasta_with_n_alleles(self, path, n):
+        with open(path, "w") as f:
+            for i in range(n):
+                f.write(f">allele_{i}\nACGTACGTACGTACGTACGTACGT\n")
+
+    def test_large_locus_is_skipped_and_recorded(self, tmp_path):
+        from torchbase.conversions.pubmlst import _run_quality_analysis
+
+        self._fasta_with_n_alleles(tmp_path / "big_locus.fasta", 10)
+        result = _run_quality_analysis(tmp_path, max_alleles_for_quality=5)
+
+        assert result["total_loci"] == 0
+        assert result["skipped_loci"] == [
+            {"locus": "big_locus", "allele_count": 10}
+        ]
+
+    def test_small_locus_is_analysed_normally(self, tmp_path):
+        from torchbase.conversions.pubmlst import _run_quality_analysis
+
+        self._fasta_with_n_alleles(tmp_path / "small_locus.fasta", 3)
+        result = _run_quality_analysis(tmp_path, max_alleles_for_quality=5)
+
+        assert result["total_loci"] == 1
+        assert result["skipped_loci"] == []
+        assert "small_locus" in result["loci_results"]
+
+    def test_skip_threshold_is_configurable(self, tmp_path):
+        from torchbase.conversions.pubmlst import _run_quality_analysis
+
+        self._fasta_with_n_alleles(tmp_path / "locus.fasta", 100)
+        skipped = _run_quality_analysis(tmp_path, max_alleles_for_quality=50)
+        analysed = _run_quality_analysis(tmp_path, max_alleles_for_quality=200)
+
+        assert len(skipped["skipped_loci"]) == 1
+        assert analysed["skipped_loci"] == []
+        assert analysed["total_loci"] == 1
