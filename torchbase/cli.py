@@ -599,6 +599,18 @@ def _run(clx, torch, cromwell_options="", method="main", workflow=None, output=N
                 "over the allelic typing model and does not apply."
             )
 
+        if (
+            user_specified_strategy
+            and getattr(data_torch, "calling_mode", "identity") == "presence_absence"
+            and strategy != "sensitive"
+        ):
+            raise click.ClickException(
+                "Cannot use --strategy={} with a presence/absence torch. "
+                "Presence/absence calling needs alignment coverage, not a "
+                "MinHash screen, so this torch always types at 'sensitive'; "
+                "omit --strategy or pass --strategy sensitive.".format(strategy)
+            )
+
         # Handle auto strategy: analyze input and select appropriate strategy
         auto_decision_rationale = None
         if strategy == 'auto':
@@ -1272,9 +1284,9 @@ def _ectyper(ctx, sequences, profiles, db_fasta, output, name, version, kmer_siz
 @convert.command("lissero")
 @click.argument("sequences", type=click.File(), nargs=-1)
 @click.option("--profiles", type=click.File(), default=None,
-              help="Serogroup definitions TSV (Serogroup, prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh, lin0764, lin1118)")
+              help="Serogroup definitions TSV (Serogroup, Prs, lmo0737, lmo1118, ORF2110, ORF2819)")
 @click.option("--download", is_flag=True, default=False,
-              help="Download locus FASTAs and serogroup profiles from MDU-PHL/LisSero")
+              help="Download gene FASTAs from MDU-PHL/LisSero")
 @click.option("--output", default=".", show_default=True, help="Output directory")
 @click.option("--name", default="lissero", show_default=True, help="Torch name")
 @click.option("--version", default="1.0.0", show_default=True, help="Torch version")
@@ -1297,8 +1309,6 @@ def _lissero(ctx, sequences, profiles, output, name, version, kmer_size, overlap
         click.echo(f"Downloading from {DOWNLOAD_SOURCES['repo']} → {dest}")
         sources = download_sources(dest)
         sequences = sources["sequences"]
-        if profiles is None:
-            profiles = sources["profiles"]
 
     try:
         torch_path = convert_local(

@@ -114,9 +114,21 @@ def type_allelic(
     `balanced`'s fallback is dispatched from here, which is what makes it a
     genuine middle tier: the decision needs the screen's calls, and calls are
     this layer's business.
+
+    A torch whose `calling_mode` is "presence_absence" (docs/adr/0003) always
+    types at `sensitive`, regardless of `strategy`: presence/absence calling
+    needs alignment coverage (`allele_calls.calls_from_presence`), which a
+    MinHash screen cannot provide. The CLI rejects an explicit conflicting
+    `--strategy` for such torches; this layer just does the right thing
+    either way, for callers that bypass the CLI.
     """
     if strategy not in ("fast", "balanced", "sensitive"):
         raise TypingError("unknown strategy: {}".format(strategy))
+
+    calling_mode = getattr(torch, "calling_mode", "identity")
+    id_column = getattr(torch, "id_column", None)
+    if calling_mode == "presence_absence":
+        strategy = "sensitive"
 
     workspace = Path(scratch or tempfile.mkdtemp(prefix="torchbase-run-"))
     allele_fasta, profiles_table = torch.get_unified_files()
@@ -134,24 +146,28 @@ def type_allelic(
 
         calls = {}
         alignment_used = False
-        if strategy in ("fast", "balanced"):
-            calls = _screen(
-                query, filtered_fasta, strategy, confidence_threshold, engine
-            )
-        if strategy == "sensitive" or (
-            strategy == "balanced" and reports.needs_alignment(calls, confidence_threshold)
-        ):
-            aligned = _align(
-                query, filtered_fasta, input_type, identity_threshold, engine
-            )
+        if calling_mode == "presence_absence":
+            calls = _align_presence(query, filtered_fasta, input_type, engine)
             alignment_used = True
-            calls = (
-                aligned
-                if strategy == "sensitive"
-                else reports.merge_calls(calls, aligned, True, confidence_threshold)
-            )
+        else:
+            if strategy in ("fast", "balanced"):
+                calls = _screen(
+                    query, filtered_fasta, strategy, confidence_threshold, engine
+                )
+            if strategy == "sensitive" or (
+                strategy == "balanced" and reports.needs_alignment(calls, confidence_threshold)
+            ):
+                aligned = _align(
+                    query, filtered_fasta, input_type, identity_threshold, engine
+                )
+                alignment_used = True
+                calls = (
+                    aligned
+                    if strategy == "sensitive"
+                    else reports.merge_calls(calls, aligned, True, confidence_threshold)
+                )
 
-        profiles, loci_order = profile_match.load_profiles(profiles_table)
+        profiles, loci_order = profile_match.load_profiles(profiles_table, id_column)
         profile = profile_match.build_profile_record(
             calls,
             profiles,
@@ -159,6 +175,7 @@ def type_allelic(
             torch.path.parent.name,
             strategy=strategy,
             alignment_used=alignment_used,
+            id_column=id_column,
         )
         return reports.add_exclusion_metadata(profile, exclusions)
     finally:
@@ -260,4 +277,32 @@ def _align(
         runner.require_file(outputs, "alignments"),
         allele_calls.parse_fasta_dict(query),
         identity_threshold=identity_threshold,
+    )
+
+
+def _align_presence(
+    query: str,
+    allele_fasta: Path,
+    input_type: str,
+    engine: str,
+) -> Dict[str, dict]:
+    """Presence/absence calling from the same alignment WDL task `_align` uses.
+
+    The task itself is identical -- coverage-aware presence detection needs
+    alignment either way -- only the reduction differs
+    (`allele_calls.calls_from_presence` instead of `calls_from_alignment`).
+    """
+    outputs = runner.run_workflow(
+        workflow_path("allele_alignment.wdl"),
+        {
+            "query_sequences": query,
+            "allele_fasta": str(allele_fasta),
+            "preset": ALIGNMENT_PRESETS.get(input_type, "asm5"),
+        },
+        engine=engine,
+    )
+    return allele_calls.calls_from_presence(
+        runner.require_file(outputs, "alignments"),
+        allele_calls.parse_fasta_dict(query),
+        allele_fasta,
     )

@@ -88,3 +88,23 @@ def fetch_file(
 
     part.rename(dest)
     return dest
+
+
+def parse_fasta_records(text: str):
+    """Yield (header, sequence) pairs from FASTA text.
+
+    A header is truncated at the first whitespace (FASTA description text is
+    discarded), matching every converter's own convention. Shared by
+    converters that split one consolidated upstream reference into several
+    torch resource files (torchbase.conversions.shigatyper, .lissero).
+    """
+    header, chunks = None, []
+    for line in text.splitlines():
+        if line.startswith(">"):
+            if header is not None:
+                yield header, "".join(chunks)
+            header, chunks = line[1:].split()[0], []
+        elif header is not None:
+            chunks.append(line.strip())
+    if header is not None:
+        yield header, "".join(chunks)

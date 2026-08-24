@@ -169,6 +169,17 @@ class Torch:
     operon_config: Optional[Dict] = None
     operon_profiles: Optional[list] = None
 
+    # Calling-mode axis within the allelic typing model (docs/adr/0003-
+    # profile-matching-value-domain-agnostic.md): "identity" (default,
+    # best-matching-allele calling) or "presence_absence" (marker
+    # present/absent/ambiguous calling -- ShigaTyper/LisSero-shaped
+    # serotyping torches). Read from metadata.toml's `[typing]` table.
+    calling_mode: str = "identity"
+    # Name of profiles.tsv's row-identifier column, verbatim (e.g.
+    # "Serotype"/"Serogroup"); None auto-detects any column named ST (any
+    # casing), matching torchbase.profile_match's default.
+    id_column: Optional[str] = None
+
     @staticmethod
     def load(new_path):
         """Load torch from disk with single and multi-scheme support.
@@ -327,6 +338,9 @@ class Torch:
         """
         manifest = metadata.get("manifest", {})
         typing_model = metadata.get("typing_model", "allelic")
+        typing_table = metadata.get("typing", {})
+        calling_mode = typing_table.get("calling_mode", "identity")
+        id_column = typing_table.get("id_column")
 
         # Load profiles
         profiles_file = manifest.get("profiles")
@@ -401,6 +415,8 @@ class Torch:
             typing_model=typing_model,
             operon_config=operon_config,
             operon_profiles=operon_profiles,
+            calling_mode=calling_mode,
+            id_column=id_column,
         )
 
     def concatenate_alleles(self) -> Path:
@@ -567,8 +583,11 @@ class Torch:
 
         The profile identifier is the first column. `Profile.header` covers only
         the loci — the identifier lives in `Profile.profile` — so writing the
-        header alone produced a table with no ST column, and profile lookup
-        could never match anything against it.
+        header alone produced a table with no identifier column, and profile
+        lookup could never match anything against it. The identifier column
+        is named `self.id_column` when set (e.g. "Serotype"/"Serogroup" for a
+        presence/absence torch, docs/adr/0003), else "ST" for backward
+        compatibility.
 
         Args:
             output_path: Path to write transformed TSV
@@ -576,10 +595,11 @@ class Torch:
         if not self.profile or not self.profile.profiles:
             return
 
+        id_column = self.id_column or "ST"
         loci = [h for h in self.profile.profiles[0].header if h != 'ST']
 
         with open(output_path, 'w', newline='', encoding="utf-8") as out_f:
-            out_f.write('\t'.join(['ST'] + loci) + '\n')
+            out_f.write('\t'.join([id_column] + loci) + '\n')
             for profile in self.profile.profiles:
                 row = [str(profile.profile)]
                 row.extend(str(getattr(profile, locus, '')) for locus in loci)

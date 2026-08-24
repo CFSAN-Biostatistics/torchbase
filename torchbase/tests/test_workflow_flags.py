@@ -132,6 +132,11 @@ class TestSuspectFilteringReachesTheAlleleSet:
         profiles.write_text("ST\tadk\tfumC\n1\t1\t1\n")
         torch.get_unified_files.return_value = (allele_fasta, profiles)
         torch.path = tmp_path / "ns" / "name" / "1.0.0.torch"
+        # New Torch fields (docs/adr/0003): a bare MagicMock auto-vivifies
+        # any attribute access, so these must be pinned to their real
+        # dataclass defaults or type_allelic misreads them as truthy.
+        torch.calling_mode = "identity"
+        torch.id_column = None
         return torch
 
     def _run_fast(self, torch, tmp_path, quality_path, **flags):

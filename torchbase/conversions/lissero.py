@@ -1,17 +1,16 @@
 """LisSero converter — local database files to torch format.
 
-LisSero serotypes Listeria monocytogenes based on the presence or absence of
-eight PCR-target loci: prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh, lin0764,
-lin1118. Serogroup is determined by the binary pattern of detected loci.
+LisSero serotypes Listeria monocytogenes from presence/absence of five
+PCR-target genes -- Prs (species gate), lmo0737, lmo1118, ORF2110, ORF2819 --
+against upstream's single combined `lissero/db/sequences.fasta`. If a
+profiles TSV is provided it is used as-is; otherwise this converter writes
+the canonical table below, a mechanical transcription of upstream's
+`Serotype.report_maker()` decision tree (see `_build_canonical_profiles`),
+so a torch built with `--download` is loadable *and* typeable.
 
-Expected serogroup table (TSV) columns:
-    Serogroup, prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh, lin0764, lin1118
-Values in each locus column should be 1 (present) or 0 (absent).
+torchtools convert lissero --download --output torches/
 
-Usage:
-    torchtools convert lissero --profiles serogroups.tsv \\
-        prs.fasta LMOSA.fasta LMOSB.fasta ORF2110.fasta ORF2819.fasta \\
-        ldh.fasta lin0764.fasta lin1118.fasta
+See docs/adr/0003-profile-matching-value-domain-agnostic.md.
 """
 
 import csv
@@ -19,10 +18,11 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, IO, Optional
+from typing import Dict, List, IO, Optional
 
 import toml
 
+from torchbase.conversions import parse_fasta_records
 from torchbase.quality.kmer_analysis import analyze_locus
 from torchbase.conversions.log import get_logger, TRACE
 
@@ -31,45 +31,95 @@ _log = get_logger("lissero")
 
 TAXA = ["Listeria monocytogenes"]
 
-# Canonical LisSero loci in expected order
-CANONICAL_LOCI = ["prs", "LMOSA", "LMOSB", "ORF2110", "ORF2819", "ldh", "lin0764", "lin1118"]
+# The five genes LisSero's Serotype.report_maker() actually inspects, in its
+# own declared dict order. (This corrects an earlier, wrong locus list --
+# prs/LMOSA/LMOSB/ORF2110/ORF2819/ldh/lin0764/lin1118 -- that named genes not
+# present in LisSero's database at all.)
+CANONICAL_LOCI = ["Prs", "lmo0737", "lmo1118", "ORF2110", "ORF2819"]
+
+# A single-allele locus's one FASTA record is always named "{locus}_1" (see
+# download_sources), so calls_from_presence reports allele_id="1" on a hit --
+# matching that here means "Prs: 1" in profiles.tsv, the same allele-ID
+# convention every other profiles.tsv in torchbase uses; ABSENT has no real
+# allele to name and stays a true sentinel.
+PRESENT, ABSENT, WILD = "1", "absent", "?"
 
 _LISSERO_RAW = "https://raw.githubusercontent.com/MDU-PHL/LisSero/master"
 
 DOWNLOAD_SOURCES = {
     "repo": "https://github.com/MDU-PHL/LisSero",
-    "sequences": [
-        (f"{locus}.fasta", f"{_LISSERO_RAW}/lissero/db/{locus}.fasta")
-        for locus in CANONICAL_LOCI
-    ],
-    "profiles": (
-        "Serogroups.tsv",
-        f"{_LISSERO_RAW}/lissero/db/Serogroups.tsv",
+    # Upstream's database is ONE combined FASTA (`lissero/db/sequences.fasta`),
+    # headers "{gene}~~{accession}:{coords} {description}"; there is no
+    # per-locus file and no downloadable profiles table (the serotype rule
+    # is Python source, transcribed into _build_canonical_profiles below).
+    "reference": (
+        "sequences.fasta",
+        f"{_LISSERO_RAW}/lissero/db/sequences.fasta",
     ),
 }
 
 
 def download_sources(dest_dir: Path) -> dict:
-    """Download canonical LisSero database files to dest_dir.
+    """Download LisSero's combined reference and split it into one file per gene.
 
-    Returns {'sequences': [list of open file handles], 'profiles': open file handle}.
+    Returns {'sequences': [list of open file handles]}.
     """
     from torchbase.conversions import fetch_file
 
     dest_dir = Path(dest_dir)
+    filename, url = DOWNLOAD_SOURCES["reference"]
+    combined = fetch_file(url, dest_dir / filename)
 
+    genes_dir = dest_dir / "genes"
+    genes_dir.mkdir(exist_ok=True)
     sequence_files = []
-    for filename, url in DOWNLOAD_SOURCES["sequences"]:
-        path = fetch_file(url, dest_dir / filename)
-        sequence_files.append(open(path, encoding="utf-8"))
+    for header, sequence in parse_fasta_records(combined.read_text(encoding="utf-8")):
+        # Upstream truncates a hit name at "~~" too (Serotype._blast_parse).
+        gene = header.split("~~")[0]
+        gene_path = genes_dir / f"{gene}.fasta"
+        # "_1": an explicit allele id, matching extract_locus_and_allele's
+        # "split at the last underscore" convention -- and the real token
+        # calls_from_presence reports on a hit (see PRESENT above).
+        gene_path.write_text(f">{gene}_1\n{sequence}\n", encoding="utf-8")
+        sequence_files.append(open(gene_path, encoding="utf-8"))
 
-    prof_name, prof_url = DOWNLOAD_SOURCES["profiles"]
-    prof_path = fetch_file(prof_url, dest_dir / prof_name)
+    _log.info("split %s into %d gene loci", filename, len(sequence_files))
+    return {"sequences": sequence_files}
 
-    return {
-        "sequences": sequence_files,
-        "profiles": open(prof_path, encoding="utf-8"),
-    }
+
+# --------------------------------------------------------------------------
+# Canonical serogroup table: a mechanical transcription of upstream's
+# Serotype.report_maker() decision tree (lissero/scripts/Serotype.py) into
+# profiles.tsv rows. torchbase.allele_calls.calls_from_presence's
+# present/absent tokens plus torchbase.profile_match's first-matching-row
+# semantics reproduce it exactly, with the same row priority as upstream's
+# if/elif chain: Prs- is checked (and wins) unconditionally first.
+# --------------------------------------------------------------------------
+
+
+def _row(profile_id: str, **locus_values: str) -> Dict[str, str]:
+    row = {"Serogroup": profile_id}
+    for locus in CANONICAL_LOCI:
+        row[locus] = locus_values.pop(locus, WILD)
+    if locus_values:
+        raise ValueError(f"unknown locus column(s): {sorted(locus_values)}")
+    return row
+
+
+def _build_canonical_profiles() -> List[Dict[str, str]]:
+    """Build the canonical profiles.tsv rows, in upstream's own priority order."""
+    return [
+        _row("Nontypeable", Prs=ABSENT),
+        _row("1/2c, 3c", Prs=PRESENT, lmo0737=PRESENT, ORF2819=ABSENT, ORF2110=ABSENT, lmo1118=PRESENT),
+        _row("1/2a, 3a", Prs=PRESENT, lmo0737=PRESENT, ORF2819=ABSENT, ORF2110=ABSENT, lmo1118=ABSENT),
+        _row("4b, 4d, 4e", Prs=PRESENT, ORF2819=PRESENT, lmo0737=ABSENT, lmo1118=ABSENT, ORF2110=PRESENT),
+        _row("1/2b, 3b, 7", Prs=PRESENT, ORF2819=PRESENT, lmo0737=ABSENT, lmo1118=ABSENT, ORF2110=ABSENT),
+        _row("Nontypeable", Prs=PRESENT, lmo0737=PRESENT, ORF2819=PRESENT, ORF2110=PRESENT, lmo1118=PRESENT),
+        _row("4b, 4d, 4e*", Prs=PRESENT, lmo0737=PRESENT, ORF2819=PRESENT, ORF2110=PRESENT, lmo1118=ABSENT),
+        # Everything else (Prs+, no combination above matched) is upstream's
+        # own final `else: Nontypeable` -- left as the natural novel_profile
+        # fallthrough rather than an explicit row.
+    ]
 
 
 def convert_local(
@@ -86,13 +136,13 @@ def convert_local(
     """Convert local LisSero database files to torch format.
 
     Args:
-        sequence_files: Open file handles for per-locus FASTA files.
-            Canonical loci: prs, LMOSA, LMOSB, ORF2110, ORF2819, ldh,
-            lin0764, lin1118. Filenames should match locus names.
-        profiles_file: Open file handle for serogroup definitions TSV.
-            Columns: Serogroup, prs, LMOSA, LMOSB, ORF2110, ORF2819,
-            ldh, lin0764, lin1118 (binary 1/0 per locus). If absent, a
-            stub header-only table is written so the torch is loadable.
+        sequence_files: Open file handles for per-gene FASTA files. Canonical
+            loci: Prs, lmo0737, lmo1118, ORF2110, ORF2819 (see
+            `download_sources`). Filenames should match locus names.
+        profiles_file: Optional open file handle for a serogroup definitions
+            TSV, overriding the canonical table this converter would
+            otherwise write (see module docstring). Columns: Serogroup, then
+            one column per locus in `CANONICAL_LOCI`.
         output_path: Directory in which to create the torch.
         namespace: Torch namespace (default: "lissero").
         name: Torch name (default: "lissero").
@@ -128,8 +178,11 @@ def convert_local(
         profiles_file.seek(0)
         rows = list(csv.reader(profiles_file, delimiter="\t"))
         profile_count = max(0, len(rows) - 1)
+    elif set(locus_names) == set(CANONICAL_LOCI):
+        _write_canonical_profiles(profiles_dest)
+        profile_count = len(_build_canonical_profiles())
     else:
-        _write_stub_profiles(profiles_dest, locus_names or CANONICAL_LOCI)
+        _write_stub_profiles(profiles_dest, locus_names)
         profile_count = 0
 
     _log.info("  profiles: %d rows", profile_count)
@@ -153,13 +206,20 @@ def convert_local(
             "scheme": "LisSero PCR-target serogroup",
             "loci_count": len(locus_names),
             "profiles_count": profile_count,
+            "calling_mode": "presence_absence",
+            "id_column": "Serogroup",
         },
         "description": {
             "short": "LisSero Listeria monocytogenes serogroup torch",
             "long": (
                 "Listeria monocytogenes serogroup determination by "
-                "presence/absence of eight PCR-target loci: "
-                + ", ".join(CANONICAL_LOCI)
+                "presence/absence of five PCR-target loci: "
+                + ", ".join(CANONICAL_LOCI) + ". profiles.tsv is a "
+                "mechanical transcription of LisSero's "
+                "Serotype.report_maker() decision tree into rows, matched "
+                "by presence/absence (torchbase.allele_calls."
+                "calls_from_presence); see "
+                "docs/adr/0003-profile-matching-value-domain-agnostic.md."
             ),
             "taxa": TAXA,
         },
@@ -192,6 +252,13 @@ def convert_local(
 def _write_stub_profiles(profiles_path: Path, locus_names: List[str]) -> None:
     with open(profiles_path, "w", newline="", encoding="utf-8") as f:
         csv.writer(f, delimiter="\t").writerow(["Serogroup"] + locus_names)
+
+
+def _write_canonical_profiles(profiles_path: Path) -> None:
+    with open(profiles_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["Serogroup"] + CANONICAL_LOCI, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(_build_canonical_profiles())
 
 
 def _build_quality_report(locus_names, quality_results, kmer_size, overlap_threshold):
