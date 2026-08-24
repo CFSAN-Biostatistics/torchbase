@@ -358,3 +358,49 @@ class TestLookupProfile:
         calls_path.write_text(json.dumps({}))
         record = lookup_profile(str(calls_path), str(table), scheme="salmonella_mlst")
         assert record["scheme"] == "salmonella_mlst"
+
+
+SEROTYPE_TSV = "Serotype\twzx\twzy\n1,2a\tA\tB\n3\t?\tB\n"
+SEROTYPE_LOCI = ["wzx", "wzy"]
+
+
+@pytest.fixture
+def serotype_table(tmp_path):
+    """An ECTyper/SeqSero2-shaped table: identifier column is not named ST."""
+    scheme_dir = tmp_path / "shigatyper"
+    scheme_dir.mkdir()
+    path = scheme_dir / "profiles.tsv"
+    path.write_text(SEROTYPE_TSV, newline="")
+    return path
+
+
+class TestExplicitIdColumn:
+    """A named non-ST identifier column (docs/adr/0003), e.g. Serotype."""
+
+    def test_load_profiles_excludes_the_named_column_from_loci(self, serotype_table):
+        rows, loci_order = load_profiles(str(serotype_table), id_column="Serotype")
+        assert loci_order == SEROTYPE_LOCI
+        assert rows[0]["Serotype"] == "1,2a"
+
+    def test_without_id_column_serotype_is_treated_as_a_locus(self, serotype_table):
+        # Unchanged auto-detect behaviour: only a literal ST column is special.
+        rows, loci_order = load_profiles(str(serotype_table))
+        assert loci_order == ["Serotype"] + SEROTYPE_LOCI
+
+    def test_st_column_honours_the_explicit_name(self):
+        assert st_column({"Serotype": "1,2a", "wzx": "A"}, id_column="Serotype") == "Serotype"
+
+    def test_st_column_explicit_name_absent_from_row_is_none(self):
+        assert st_column({"wzx": "A"}, id_column="Serotype") is None
+
+    def test_match_profile_matches_on_the_named_column(self, serotype_table):
+        rows, loci_order = load_profiles(str(serotype_table), id_column="Serotype")
+        profile_id, status = match_profile("A,B", rows, loci_order, id_column="Serotype")
+        assert (profile_id, status) == ("1,2a", STATUS_KNOWN)
+
+    def test_lookup_profile_end_to_end_with_named_id_column(self, tmp_path, serotype_table):
+        calls_path = tmp_path / "allele_calls.json"
+        calls_path.write_text(json.dumps(called(wzx="A", wzy="B")))
+        record = lookup_profile(str(calls_path), str(serotype_table), id_column="Serotype")
+        assert record["profile_id"] == "1,2a"
+        assert record["status"] == STATUS_KNOWN

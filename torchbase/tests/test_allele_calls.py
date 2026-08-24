@@ -605,3 +605,103 @@ class TestAssemblyQueryCallsEveryLocus:
         )
         assert calls["adk"]["allele_id"] == "2"
         assert calls["adk"]["identity"] == 1.0
+
+
+class TestRecordCoverage:
+    def test_coverage_is_aligned_length_over_reference_length(self):
+        record = next(allele_calls.parse_sam_lines([sam_line("q1", "cadA", tlen="40", nm="0")]))
+        assert allele_calls.record_coverage(record, {"cadA": "A" * 50}) == 0.8
+
+    def test_unknown_reference_scores_zero(self):
+        record = next(allele_calls.parse_sam_lines([sam_line("q1", "cadA", tlen="40", nm="0")]))
+        assert allele_calls.record_coverage(record, {}) == 0.0
+
+    def test_coverage_clamps_to_one_when_alignment_overruns_reference(self):
+        record = next(allele_calls.parse_sam_lines([sam_line("q1", "cadA", tlen="40", nm="0")]))
+        assert allele_calls.record_coverage(record, {"cadA": "A" * 10}) == 1.0
+
+
+def presence_line(query, ref, ref_len, nm=0, cigar=None):
+    """A SAM record whose CIGAR covers the whole reference (or a shorter run)."""
+    covered = cigar if cigar is not None else "{}M".format(ref_len)
+    fields = [query, "0", ref, "1", "60", covered, "*", "0", str(ref_len),
+              "A" * ref_len, "*", "NM:i:{}".format(nm)]
+    return "\t".join(fields)
+
+
+class TestCallsFromPresence:
+    """LisSero/ShigaTyper-shaped presence/absence calling (docs/adr/0003)."""
+
+    def test_marker_with_no_records_at_all_is_absent(self):
+        calls = allele_calls.calls_from_presence([], {}, {"cadA": "A" * 40})
+        assert calls == {"cadA": {"allele_id": "absent", "status": "absent", "confidence": False}}
+
+    def test_qualifying_hit_is_present_with_variant_and_identity(self):
+        sam = [presence_line("contig_1", "wzx_Sb11", 40, nm=0)]
+        calls = allele_calls.calls_from_presence(
+            list(allele_calls.parse_sam_lines(sam)), {}, {"wzx_Sb11": "A" * 40}
+        )
+        assert calls["wzx"] == {
+            "allele_id": "Sb11", "status": "present", "identity": 1.0, "confidence": True,
+        }
+
+    def test_below_identity_threshold_is_absent_not_a_weak_guess(self):
+        sam = [presence_line("contig_1", "cadA", 40, nm=10)]  # identity 0.75 < 0.90
+        calls = allele_calls.calls_from_presence(
+            list(allele_calls.parse_sam_lines(sam)), {}, {"cadA": "A" * 40}
+        )
+        assert calls["cadA"]["status"] == "absent"
+        assert calls["cadA"]["allele_id"] == "absent"
+
+    def test_below_coverage_threshold_is_absent(self):
+        sam = [presence_line("contig_1", "cadA", 100, nm=0, cigar="50M50S")]  # covers half
+        calls = allele_calls.calls_from_presence(
+            list(allele_calls.parse_sam_lines(sam)), {}, {"cadA": "A" * 100}
+        )
+        assert calls["cadA"]["status"] == "absent"
+
+    def test_two_qualifying_variants_are_ambiguous_by_default_regardless_of_score_gap(self):
+        sam = [
+            presence_line("contig_1", "wzx_Sb11", 40, nm=0),   # identity 1.0
+            presence_line("contig_1", "wzx_Sb12", 40, nm=4),   # identity 0.90 -- still qualifies
+        ]
+        calls = allele_calls.calls_from_presence(
+            list(allele_calls.parse_sam_lines(sam)), {},
+            {"wzx_Sb11": "A" * 40, "wzx_Sb12": "A" * 40},
+        )
+        assert calls["wzx"]["status"] == "ambiguous"
+        assert calls["wzx"]["allele_id"] == "ambiguous"
+        assert set(calls["wzx"]["candidates"]) == {"Sb11", "Sb12"}
+        assert calls["wzx"]["confidence"] is False
+
+    def test_ambiguity_gap_lets_a_clear_winner_through(self):
+        sam = [
+            presence_line("contig_1", "wzx_Sb11", 40, nm=0),   # identity 1.0
+            presence_line("contig_1", "wzx_Sb12", 40, nm=4),   # identity 0.90
+        ]
+        calls = allele_calls.calls_from_presence(
+            list(allele_calls.parse_sam_lines(sam)), {},
+            {"wzx_Sb11": "A" * 40, "wzx_Sb12": "A" * 40},
+            ambiguity_gap=0.01,
+        )
+        assert calls["wzx"] == {
+            "allele_id": "Sb11", "status": "present", "identity": 1.0, "confidence": True,
+        }
+
+    def test_every_reference_locus_is_reported_even_with_zero_records(self):
+        sam = [presence_line("contig_1", "cadA", 40, nm=0)]
+        calls = allele_calls.calls_from_presence(
+            list(allele_calls.parse_sam_lines(sam)), {},
+            {"cadA": "A" * 40, "ipaB": "A" * 40},
+        )
+        assert calls["cadA"]["status"] == "present"
+        assert calls["ipaB"]["status"] == "absent"
+
+    def test_reference_sequences_and_query_sequences_accept_fasta_dicts_or_paths(self, tmp_path):
+        ref_fasta = tmp_path / "markers.fasta"
+        ref_fasta.write_text(">cadA\n" + "A" * 40 + "\n")
+        sam = [presence_line("contig_1", "cadA", 40, nm=0)]
+        calls = allele_calls.calls_from_presence(
+            list(allele_calls.parse_sam_lines(sam)), {}, str(ref_fasta)
+        )
+        assert calls["cadA"]["status"] == "present"

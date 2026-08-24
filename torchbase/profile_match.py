@@ -42,13 +42,15 @@ def load_allele_calls(json_path):
         return json.load(handle)
 
 
-def load_profiles(tsv_path):
-    # type: (str) -> Tuple[Profiles, List[str]]
+def load_profiles(tsv_path, id_column=None):
+    # type: (str, Optional[str]) -> Tuple[Profiles, List[str]]
     """Read a profiles TSV into rows plus the locus column order.
 
-    Any column named ``ST`` (any casing) is the profile identifier, not a
-    locus, so it is excluded from the locus order while staying on each row.
-    A header-only table yields no rows but a full locus order.
+    `id_column` names the row identifier column verbatim (e.g. ``"Serotype"``
+    for an ECTyper/SeqSero2 torch); unset auto-detects any column named ``ST``
+    (any casing) as the identifier, the original behaviour. Either way the
+    identifier column is excluded from the returned locus order while staying
+    on each row. A header-only table yields no rows but a full locus order.
     """
     profiles = []  # type: Profiles
     loci_order = []  # type: List[str]
@@ -57,13 +59,24 @@ def load_profiles(tsv_path):
         for row in reader:
             profiles.append(row)
         if reader.fieldnames:
-            loci_order = [col for col in reader.fieldnames if col.upper() != "ST"]
+            if id_column is not None:
+                loci_order = [col for col in reader.fieldnames if col != id_column]
+            else:
+                loci_order = [col for col in reader.fieldnames if col.upper() != "ST"]
     return profiles, loci_order
 
 
-def st_column(profile):
-    # type: (Dict[str, str]) -> Optional[str]
-    """Name of the row's ST column, whatever its casing, else None."""
+def st_column(profile, id_column=None):
+    # type: (Dict[str, str], Optional[str]) -> Optional[str]
+    """Name of the row's identifier column, else None.
+
+    `id_column`, when given, is used verbatim (and must be present on the
+    row); unset falls back to any column named ``ST`` (any casing) -- the
+    original, `load_profiles`-independent auto-detection every caller used
+    before an explicit identifier column existed.
+    """
+    if id_column is not None:
+        return id_column if id_column in profile else None
     for column in profile.keys():
         if column.upper() == "ST":
             return column
@@ -101,20 +114,21 @@ def row_profile_string(profile, loci_order):
     return ",".join(profile[locus] for locus in loci_order if locus in profile)
 
 
-def match_profile(profile_string, profiles, loci_order):
-    # type: (str, Profiles, Sequence[str]) -> Tuple[Optional[str], str]
+def match_profile(profile_string, profiles, loci_order, id_column=None):
+    # type: (str, Profiles, Sequence[str], Optional[str]) -> Tuple[Optional[str], str]
     """First table row consistent with the query profile, and its status.
 
     Returns ``(st, STATUS_KNOWN)`` for the first row where every position that
     is a wildcard on neither side agrees, else ``(None, STATUS_NOVEL_PROFILE)``.
     Rows whose allele count differs from the query's are skipped, as are rows
-    from a table with no ST column -- such a table can only ever be novel.
+    from a table with no identifier column -- such a table can only ever be
+    novel. ``id_column`` matches :func:`load_profiles`'s.
     """
     st_col = None
     query_parts = profile_string.split(",")
     for profile in profiles:
         if st_col is None:
-            st_col = st_column(profile)
+            st_col = st_column(profile, id_column)
 
         table_parts = row_profile_string(profile, loci_order).split(",")
         if len(query_parts) != len(table_parts):
@@ -134,14 +148,15 @@ def match_profile(profile_string, profiles, loci_order):
     return None, STATUS_NOVEL_PROFILE
 
 
-def find_nearest_st(profile_string, profiles, loci_order):
-    # type: (str, Profiles, Sequence[str]) -> Tuple[Optional[str], float]
+def find_nearest_st(profile_string, profiles, loci_order, id_column=None):
+    # type: (str, Profiles, Sequence[str], Optional[str]) -> Tuple[Optional[str], float]
     """Nearest ST to a novel profile by Hamming distance; wildcards cost 0.
 
     Ties go to the first row in table order. Missing loci are filled with
     ``?`` rather than shortening the row, so unlike :func:`match_profile` a row
     lacking a locus column is still comparable. Returns ``(None, inf)`` when no
-    row is usable (no ST column, or every row a different length).
+    row is usable (no identifier column, or every row a different length).
+    ``id_column`` matches :func:`load_profiles`'s.
     """
     query_parts = profile_string.split(",")
     best_st = None  # type: Optional[str]
@@ -150,7 +165,7 @@ def find_nearest_st(profile_string, profiles, loci_order):
 
     for profile in profiles:
         if st_col is None:
-            st_col = st_column(profile)
+            st_col = st_column(profile, id_column)
         if st_col is None:
             continue
 
@@ -202,21 +217,23 @@ def build_profile_record(
     scheme,
     strategy="balanced",
     alignment_used=False,
+    id_column=None,
 ):
-    # type: (Dict[str, Any], Profiles, Sequence[str], str, str, bool) -> Dict[str, Any]
+    # type: (Dict[str, Any], Profiles, Sequence[str], str, str, bool, Optional[str]) -> Dict[str, Any]
     """Assemble the typing record the heredoc wrote to `profile_result.json`.
 
     ``nearest_st``/``nearest_st_distance`` appear only for a novel profile
-    matched against a non-empty table with a usable ST column.
+    matched against a non-empty table with a usable identifier column.
+    ``id_column`` matches :func:`load_profiles`'s.
     """
     profile_string = build_profile_string(allele_calls, loci_order)
-    profile_id, status = match_profile(profile_string, profiles, loci_order)
+    profile_id, status = match_profile(profile_string, profiles, loci_order, id_column)
 
     nearest_st = None
     nearest_st_distance = None
     if status == STATUS_NOVEL_PROFILE and profiles:
         nearest_st, nearest_st_distance = find_nearest_st(
-            profile_string, profiles, loci_order
+            profile_string, profiles, loci_order, id_column
         )
 
     overall_confidence = mean_confidence(allele_calls)
@@ -254,15 +271,17 @@ def lookup_profile(
     strategy="balanced",
     alignment_used=False,
     scheme="",
+    id_column=None,
 ):
-    # type: (str, str, str, bool, str) -> Dict[str, Any]
+    # type: (str, str, str, bool, str, Optional[str]) -> Dict[str, Any]
     """Read calls and a profiles table from disk and return the typing record.
 
     Convenience entry point for the caller that consumes workflow outputs; the
-    caller decides where (and whether) to serialise the record.
+    caller decides where (and whether) to serialise the record. ``id_column``
+    matches :func:`load_profiles`'s.
     """
     allele_calls = load_allele_calls(allele_calls_path)
-    profiles, loci_order = load_profiles(profiles_table_path)
+    profiles, loci_order = load_profiles(profiles_table_path, id_column)
     return build_profile_record(
         allele_calls,
         profiles,
@@ -270,4 +289,5 @@ def lookup_profile(
         scheme_name(scheme, profiles_table_path),
         strategy,
         alignment_used,
+        id_column,
     )

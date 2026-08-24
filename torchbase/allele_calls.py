@@ -39,6 +39,21 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.85
 #: Default of ``align_and_call``'s ``identity_threshold`` WDL input.
 DEFAULT_IDENTITY_THRESHOLD = 0.90
 
+#: Presence/absence calling (docs/adr/0003-profile-matching-value-domain-agnostic.md):
+#: a marker "hits" when both clear these defaults.
+DEFAULT_PRESENCE_IDENTITY_THRESHOLD = 0.90
+DEFAULT_PRESENCE_COVERAGE_THRESHOLD = 0.90
+
+#: Tokens `calls_from_presence` reports as `allele_id`/`status`. Chosen so a
+#: presence/absence locus's call is an ordinary string token to
+#: `torchbase.profile_match` -- ABSENT/AMBIGUOUS are just tokens no
+#: `profiles.tsv` row lists, so they fall through to `novel_profile` on their
+#: own; a caller wanting to surface "ambiguous" as a distinct report status
+#: reads `call["status"]` before handing calls to the matcher.
+PRESENT = "present"
+ABSENT = "absent"
+AMBIGUOUS = "ambiguous"
+
 Fasta = List[Tuple[str, str]]
 FastaSource = Union[str, bytes, "os.PathLike", Fasta]
 AlleleRecord = Dict[str, Any]
@@ -160,6 +175,14 @@ def _as_fasta(source: FastaSource) -> Fasta:
     if _is_path(source):
         return parse_fasta(source)
     return [(header, seq) for header, seq in source]
+
+
+def _as_fasta_dict(source: Union[FastaSource, Dict[str, str]]) -> Dict[str, str]:
+    if _is_path(source):
+        return parse_fasta_dict(source)
+    if isinstance(source, dict):
+        return source
+    return dict(source)
 
 
 def is_empty_matrix(rows: Sequence[Sequence[str]]) -> bool:
@@ -489,3 +512,114 @@ def calls_from_alignment(
             _as_sam_records(records_or_path), query_sequences
         ).items()
     }
+
+
+
+# --------------------------------------------------------------------------
+# Presence/absence path: alignment records -> present/absent/ambiguous calls
+# --------------------------------------------------------------------------
+#
+# See docs/adr/0003-profile-matching-value-domain-agnostic.md. A presence/
+# absence marker panel (LisSero's five serogroup-determinant genes;
+# ShigaTyper's O-antigen and accessory markers) is called the same way an
+# allelic locus is -- best candidate per locus above a threshold -- with two
+# differences an identity-only reduction does not need: no qualifying
+# candidate is an explicit ABSENT, not a low-confidence best guess, and more
+# than one qualifying candidate at once is AMBIGUOUS (contamination, or two
+# members of a mutually-exclusive marker family both present), not silently
+# resolved by picking the higher-scoring one. Once called, the token feeds
+# `torchbase.profile_match` exactly like any other locus's `allele_id`.
+
+
+def record_coverage(record: SamRecord, reference_sequences: Dict[str, str]) -> float:
+    """Fractional reference coverage of an alignment: aligned length / reference length.
+
+    `reference_sequences` is `{reference name: sequence}` -- the marker/allele
+    FASTA aligned against, keyed the same way as `record["ref_name"]`. Coverage
+    is clamped to 1.0 (an alignment can run past its reference's ends) and is
+    0.0 for a reference this dict does not know.
+    """
+    length = aligned_length(record.get("cigar", "") or "")
+    ref_len = len(reference_sequences.get(record["ref_name"], ""))
+    if ref_len <= 0:
+        return 0.0
+    return min(1.0, length / ref_len)
+
+
+def calls_from_presence(
+    records_or_path: Any,
+    query_sequences: Union[FastaSource, Dict[str, str]],
+    reference_sequences: Union[FastaSource, Dict[str, str]],
+    identity_threshold: float = DEFAULT_PRESENCE_IDENTITY_THRESHOLD,
+    coverage_threshold: float = DEFAULT_PRESENCE_COVERAGE_THRESHOLD,
+    ambiguity_gap: Optional[float] = None,
+) -> Calls:
+    """Presence/absence allele calls: one PRESENT/ABSENT/AMBIGUOUS token per locus.
+
+    A candidate qualifies when its identity and coverage both clear their
+    thresholds (`record_identity`, `record_coverage`). Per locus:
+
+    +- zero qualifying candidates -> `allele_id`/`status` = ABSENT
+    +- exactly one qualifying candidate -> its allele_id, status PRESENT
+    +- more than one, with `ambiguity_gap` unset (the default) -- LisSero's and
+      ShigaTyper's own rule, "more than one hit is contamination," with no
+      tolerance -- -> AMBIGUOUS, and the call carries `candidates` (every
+      qualifying allele_id)
+
+    `ambiguity_gap`, when set, tolerates ties: two qualifying candidates are
+    only AMBIGUOUS if the best does not beat the second by more than that
+    much identity. Every locus present in `reference_sequences` is reported,
+    even one with zero alignment records at all, so a marker minimap2 never
+    even attempted to place is reported ABSENT rather than silently omitted.
+    """
+    reference_sequences = _as_fasta_dict(reference_sequences)
+    query_sequences = _as_fasta_dict(query_sequences)
+    records = _as_sam_records(records_or_path)
+
+    qualifying_by_locus = {}  # type: Dict[str, List[Tuple[str, float]]]
+    for record in records:
+        identity = record_identity(record, query_sequences)
+        coverage = record_coverage(record, reference_sequences)
+        if identity < identity_threshold or coverage < coverage_threshold:
+            continue
+        locus, allele_id = extract_locus_and_allele(record["ref_name"])
+        qualifying_by_locus.setdefault(locus, []).append((allele_id, identity))
+
+    all_loci = {
+        extract_locus_and_allele(ref_name)[0] for ref_name in reference_sequences
+    }
+
+    calls = {}  # type: Calls
+    for locus in all_loci:
+        qualifying = sorted(
+            qualifying_by_locus.get(locus, []), key=lambda c: -c[1]
+        )
+        if not qualifying:
+            calls[locus] = {
+                "allele_id": ABSENT, "status": ABSENT, "confidence": False,
+            }
+            continue
+
+        tied = (
+            len(qualifying) > 1 if ambiguity_gap is None
+            else len(qualifying) > 1 and qualifying[0][1] - qualifying[1][1] <= ambiguity_gap
+        )
+        if tied:
+            if ambiguity_gap is None:
+                candidates = [allele_id for allele_id, _ in qualifying]
+            else:
+                candidates = [
+                    allele_id for allele_id, identity in qualifying
+                    if qualifying[0][1] - identity <= ambiguity_gap
+                ]
+            calls[locus] = {
+                "allele_id": AMBIGUOUS, "status": AMBIGUOUS, "confidence": False,
+                "candidates": candidates,
+            }
+        else:
+            allele_id, identity = qualifying[0]
+            calls[locus] = {
+                "allele_id": allele_id, "status": PRESENT,
+                "identity": max(0.0, min(1.0, identity)), "confidence": True,
+            }
+    return calls
